@@ -37,7 +37,11 @@ artifacts/*.pkl
 # Processed Dataset
 ############################
 
-datasets/processed/
+datasets/raw/*
+!datasets/raw/.gitkeep
+
+datasets/processed/*
+!datasets/processed/.gitkeep
 
 ############################
 # Reports
@@ -105,7 +109,7 @@ Thumbs.db
 
 build/
 dist/
-
+!build/.gitkeep
 *.zip
 *.7z
 *.rar
