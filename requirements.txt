@@ -1,0 +1,35 @@
+# ==========================================
+# FPGA Binary Weight Neural Network Project
+# Python Requirements
+# ==========================================
+
+# ---------- Machine Learning ----------
+torch>=2.2,<3.0
+torchvision>=0.17,<1.0
+
+# ---------- Data Processing ----------
+numpy>=1.26,<3.0
+pandas>=2.2,<3.0
+scikit-learn>=1.5,<2.0
+
+# ---------- Scientific Computing ----------
+scipy>=1.13,<2.0
+
+# ---------- Visualization ----------
+matplotlib>=3.8,<4.0
+seaborn>=0.13,<1.0
+
+# ---------- Progress Bars ----------
+tqdm>=4.66,<5.0
+
+# ---------- UART Communication ----------
+pyserial>=3.5,<4.0
+
+# ---------- Model Evaluation ----------
+scikit-plot>=0.3
+
+# ---------- Utilities ----------
+joblib>=1.4,<2.0
+
+# ---------- Testing ----------
+pytest>=8.0,<9.0
