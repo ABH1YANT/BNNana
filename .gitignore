@@ -107,9 +107,9 @@ Thumbs.db
 # Build
 ############################
 
-build/*
+fpga/build/*
 dist/
-!build/.gitkeep
+!fpga/build/.gitkeep
 *.zip
 *.7z
 *.rar
