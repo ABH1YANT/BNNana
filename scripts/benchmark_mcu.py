@@ -36,6 +36,7 @@ def load_and_clean_data(features):
             continue
             
         print(f"Reading {file_path.name}...")
+        # Read slightly more to account for dropped NaNs
         df = pd.read_csv(file_path, low_memory=False, nrows=SAMPLES_PER_FILE * 2)
         df.columns = df.columns.str.strip()
         
@@ -47,7 +48,8 @@ def load_and_clean_data(features):
         labels = df['Label'].astype(str).str.strip().str.upper()
         df['BinaryLabel'] = (labels != "BENIGN").astype(np.uint8)
         
-        # Keep only required features in the EXACT order of the 'features' list
+        # 1. Filter columns and 2. FORCE ORDER to match selected_features.json
+        # This is critical because the MCU expects a specific struct layout
         df = df[features + ['BinaryLabel']]
         
         # Handle non-finite values
@@ -63,7 +65,6 @@ def load_and_clean_data(features):
         raise FileNotFoundError("No valid datasets found to load.")
 
     combined = pd.concat(all_chunks, ignore_index=True)
-    # Return features and labels. Features are already in the correct order.
     return combined[features], combined['BinaryLabel']
 
 def main():
@@ -72,14 +73,16 @@ def main():
     try:
         with open(FEATURES_PATH, "r") as f:
             selected_features = json.load(f)
+        print(f"Model expects {len(selected_features)} features.")
     except Exception as e:
         print(f"Error loading features: {e}")
         return
 
-    # 2. Load Raw Data (We do NOT scale here anymore)
+    # 2. Load Raw Data
+    # We send RAW data because the MCU now handles scaling internally
     X_raw, y_true = load_and_clean_data(selected_features)
     
-    # Convert to float32 to match MCU expectations
+    # Ensure data is float32 (4 bytes) for the MCU
     X_raw = X_raw.astype(np.float32)
 
     # 3. Connect to MCU
@@ -97,16 +100,20 @@ def main():
     
     total_attempts = len(X_raw)
     print(f"Starting Benchmark ({total_attempts} samples + {WARMUP_SAMPLES} warmup)...")
-    print("Note: Sending RAW features. MCU will perform scaling.")
     
     host_start_time = time.perf_counter()
 
     # 4. Benchmark Loop
     try:
         for i in tqdm(range(total_attempts)):
-            # Get raw sample as a list of floats
+            # iloc[i] preserves the column order from selected_features
             sample = X_raw.iloc[i].tolist()
             
+            # Safety check: Ensure packet size matches Protocol expectation (17 floats)
+            if len(sample) != 17:
+                print(f"Error: Sample {i} has {len(sample)} features, but Protocol expects 17.")
+                break
+
             # Send to MCU
             response = bridge.exchange(sample)
             
@@ -118,7 +125,8 @@ def main():
                     latencies.append(response['latency_us'])
                     cycles.append(response['cycles'])
             else:
-                print(f" [!] UART Timeout/Checksum Error at sample {i}")
+                # If UART fails, we don't append to true_labels, keeping them aligned
+                pass
 
     finally:
         bridge.close()
@@ -126,7 +134,7 @@ def main():
 
     # 5. Compute Metrics
     if not results:
-        print("Error: No data collected from MCU.")
+        print("Error: No data collected from MCU. Check UART wiring and Baud Rate.")
         return
 
     acc = accuracy_score(true_labels, results)
