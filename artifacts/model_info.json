@@ -1,0 +1,22 @@
+{
+  "export_version": 1,
+  "timestamp": "2026-07-18 17:08:36",
+  "architecture": {
+    "inputs": 17,
+    "hidden": 20,
+    "outputs": 1
+  },
+  "implementation": {
+    "activation": "hardtanh",
+    "batchnorm": "affine_fused",
+    "weights": "binary_sign",
+    "fixed_point": "Q8.8",
+    "scaler": "MinMaxScaler"
+  },
+  "files": [
+    "weights.h/c",
+    "scaler.h/c",
+    "feature_order.h",
+    "*.mem"
+  ]
+}

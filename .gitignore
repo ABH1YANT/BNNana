@@ -113,3 +113,5 @@ dist/
 *.zip
 *.7z
 *.rar
+
+*.csv

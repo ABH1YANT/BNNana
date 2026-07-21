@@ -1,0 +1,14 @@
+{
+    "timestamp": "2026-07-18 17:01:02",
+    "samples_attempted": 9990,
+    "samples_successful": 9990,
+    "success_rate": 1.0,
+    "accuracy": 0.7288288288288288,
+    "precision": 0.7287946428571429,
+    "recall": 0.9950131597174123,
+    "f1_score": 0.8413469985358711,
+    "avg_latency_us": 118.45265265265266,
+    "avg_cycles": 21347,
+    "throughput_fps": 8442.191690990432,
+    "host_total_time_s": 89.51068950002082
+}

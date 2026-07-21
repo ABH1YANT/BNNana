@@ -15,8 +15,7 @@ class Evaluator:
 
     def get_metrics(self, loader):
         """
-        Runs inference on the provided loader and calculates metrics.
-        Returns a dictionary of results.
+        Runs inference and calculates standardized classification metrics.
         """
         self.model.eval()
         all_preds = []
@@ -26,24 +25,23 @@ class Evaluator:
             for inputs, labels in loader:
                 inputs = inputs.to(self.device)
                 
-                # Forward pass (outputs are logits)
-                logits = self.model(inputs).squeeze()
+                # Forward pass (logits)
+                logits = self.model(inputs)
                 
-                # Convert logits to probabilities then to binary (0 or 1)
-                # On FPGA, this is equivalent to checking if the final sum > threshold
+                # Apply sigmoid to get probabilities for binary classification
                 probs = torch.sigmoid(logits)
-                preds = (probs > 0.5).cpu().numpy()
-                
-                all_preds.extend(preds)
-                all_labels.extend(labels.numpy())
+                preds = (probs > 0.5).float()
 
-        # Calculate standard ML metrics
-        metrics = {
+                all_preds.extend(preds.cpu().numpy().flatten().tolist())
+                all_labels.extend(labels.numpy().flatten().tolist())
+
+        # Calculate metrics using sklearn
+        results = {
             "accuracy": accuracy_score(all_labels, all_preds),
-            "precision": precision_score(all_labels, all_preds),
-            "recall": recall_score(all_labels, all_preds),
-            "f1_score": f1_score(all_labels, all_preds),
+            "precision": precision_score(all_labels, all_preds, zero_division=0),
+            "recall": recall_score(all_labels, all_preds, zero_division=0),
+            "f1_score": f1_score(all_labels, all_preds, zero_division=0),
             "confusion_matrix": confusion_matrix(all_labels, all_preds).tolist()
         }
-        
-        return metrics
+
+        return results

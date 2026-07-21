@@ -5,13 +5,25 @@ Configurable loss functions for binary classification.
 
 import torch
 import torch.nn as nn
+from .config import cfg
 
-def get_criterion(pos_weight=None):
+def get_criterion():
     """
-    Returns Binary Cross Entropy with Logits.
-    pos_weight: A tensor scale factor for the positive class (DDoS).
-                e.g., torch.tensor([2.0]) if DDoS is underrepresented.
+    Factory function for the loss criterion.
+    Pull settings from cfg to handle class imbalance.
     """
-    if pos_weight is not None:
-        return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    return nn.BCEWithLogitsLoss()
+    # Convert POS_WEIGHT from config to a tensor if it exists
+    pos_weight_tensor = None
+    if hasattr(cfg, 'POS_WEIGHT') and cfg.POS_WEIGHT is not None:
+        pos_weight_tensor = torch.tensor([cfg.POS_WEIGHT], device=cfg.DEVICE)
+
+    # Factory logic for different loss types
+    if cfg.LOSS_TYPE == "BCEWithLogits":
+        return nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+    
+    elif cfg.LOSS_TYPE == "Hinge":
+        # Hinge loss is sometimes preferred for BNNs
+        return nn.HingeEmbeddingLoss()
+        
+    else:
+        raise ValueError(f"Unsupported LOSS_TYPE: {cfg.LOSS_TYPE}")

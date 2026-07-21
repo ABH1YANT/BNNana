@@ -8,30 +8,30 @@ import torch
 
 class BinaryWeightSTE(torch.autograd.Function):
     """
-    Custom autograd Function that binarizes weights.
-    Forward: Returns sign(w) -> results in +1 or -1.
-    Backward: Returns the incoming gradient as-is (Identity).
+    Straight Through Estimator with Gradient Clipping.
+    Forward: sign(w)
+    Backward: Identity if |w| <= 1, else 0.
     """
-
     @staticmethod
     def forward(ctx, input_weights):
-        # Save the input for the backward pass if needed (not needed for identity STE)
-        # We return the sign of the weights. 
-        # Note: We use sign() but ensure 0 is treated as +1 to maintain binary state.
+        # Save input for the clipping logic in backward
+        ctx.save_for_backward(input_weights)
+        
         binary_weights = torch.sign(input_weights)
-        
-        # Replace 0s with 1s (sign(0) is 0 in torch, but we want binary +1/-1)
+        # Ensure binary state is strictly {-1, 1}
         binary_weights[binary_weights == 0] = 1
-        
         return binary_weights
 
     @staticmethod
     def backward(ctx, grad_output):
-        # Straight Through Estimator: 
-        # We pass the gradient back unchanged (identity function).
-        # This allows the underlying continuous weights to be updated.
-        return grad_output
+        input_weights, = ctx.saved_tensors
+        grad_input = grad_output.clone()
+        
+        # Gradient Clipping: If the weight is too far outside the [-1, 1] range,
+        # we stop updating it. This is standard for stable BNN training.
+        grad_input[input_weights.abs() > 1.0] = 0
+        
+        return grad_input
 
-# Helper function to make it easier to call in layers
 def binarize_weights(w):
     return BinaryWeightSTE.apply(w)

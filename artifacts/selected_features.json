@@ -1,0 +1,19 @@
+[
+    "Destination Port",
+    "Bwd Header Length",
+    "Total Backward Packets",
+    "Min Packet Length",
+    "Subflow Fwd Bytes",
+    "Max Packet Length",
+    "Flow Duration",
+    "Fwd Packet Length Max",
+    "Bwd Packet Length Max",
+    "min_seg_size_forward",
+    "Fwd Header Length",
+    "PSH Flag Count",
+    "URG Flag Count",
+    "SYN Flag Count",
+    "ACK Flag Count",
+    "FIN Flag Count",
+    "RST Flag Count"
+]
