@@ -16,7 +16,6 @@ REPORTS_DIR = ROOT / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
 
 PORT = "COM4"
-SCALER_PATH = ARTIFACTS_DIR / "scaler.pkl"
 FEATURES_PATH = ARTIFACTS_DIR / "selected_features.json"
 
 CSV_FILES = [
@@ -44,12 +43,11 @@ def load_and_clean_data(features):
             print(f"Warning: 'Label' column missing in {file_path.name}")
             continue
         
-        # --- Vectorized Label Cleaning (Fixed & Optimized) ---
+        # Vectorized Label Cleaning
         labels = df['Label'].astype(str).str.strip().str.upper()
-        # "BENIGN" becomes 0, everything else becomes 1
         df['BinaryLabel'] = (labels != "BENIGN").astype(np.uint8)
         
-        # Keep only required features + our new label
+        # Keep only required features in the EXACT order of the 'features' list
         df = df[features + ['BinaryLabel']]
         
         # Handle non-finite values
@@ -65,27 +63,26 @@ def load_and_clean_data(features):
         raise FileNotFoundError("No valid datasets found to load.")
 
     combined = pd.concat(all_chunks, ignore_index=True)
+    # Return features and labels. Features are already in the correct order.
     return combined[features], combined['BinaryLabel']
 
 def main():
-    # 1. Load Artifacts
-    print(f"Loading artifacts from {ARTIFACTS_DIR}...")
+    # 1. Load Feature Definitions
+    print(f"Loading feature definitions from {FEATURES_PATH}...")
     try:
-        scaler = joblib.load(SCALER_PATH)
         with open(FEATURES_PATH, "r") as f:
             selected_features = json.load(f)
     except Exception as e:
-        print(f"Artifact Load Error: {e}")
+        print(f"Error loading features: {e}")
         return
 
-    # 2. Load and Clean Data
+    # 2. Load Raw Data (We do NOT scale here anymore)
     X_raw, y_true = load_and_clean_data(selected_features)
     
-    # 3. Scale features
-    print("Scaling features...")
-    X_scaled = scaler.transform(X_raw)
+    # Convert to float32 to match MCU expectations
+    X_raw = X_raw.astype(np.float32)
 
-    # 4. Connect to MCU
+    # 3. Connect to MCU
     try:
         bridge = UARTBridge(PORT)
         print(f"Connected to STM32 on {PORT}")
@@ -93,41 +90,43 @@ def main():
         print(f"UART Connection Error: {e}")
         return
 
-    # Results tracking (Always aligned)
     results = []
     true_labels = []
     latencies = []
     cycles = []
     
-    total_attempts = len(X_scaled)
+    total_attempts = len(X_raw)
     print(f"Starting Benchmark ({total_attempts} samples + {WARMUP_SAMPLES} warmup)...")
+    print("Note: Sending RAW features. MCU will perform scaling.")
     
     host_start_time = time.perf_counter()
 
-    # 5. Benchmark Loop
+    # 4. Benchmark Loop
     try:
         for i in tqdm(range(total_attempts)):
-            sample = X_scaled[i].tolist()
+            # Get raw sample as a list of floats
+            sample = X_raw.iloc[i].tolist()
+            
+            # Send to MCU
             response = bridge.exchange(sample)
             
-            # Response is only None if UART times out or checksum fails
             if response is not None:
-                # Discard warmup samples from metrics to allow cache/USB buffer to settle
+                # Discard warmup samples from metrics
                 if i >= WARMUP_SAMPLES:
                     results.append(response['prediction'])
                     true_labels.append(y_true.iloc[i])
                     latencies.append(response['latency_us'])
                     cycles.append(response['cycles'])
             else:
-                print(f" [!] Communication failure at sample {i}")
+                print(f" [!] UART Timeout/Checksum Error at sample {i}")
 
     finally:
         bridge.close()
         host_end_time = time.perf_counter()
 
-    # 6. Compute Metrics
+    # 5. Compute Metrics
     if not results:
-        print("Error: No data collected from MCU. Check hardware.")
+        print("Error: No data collected from MCU.")
         return
 
     acc = accuracy_score(true_labels, results)
@@ -143,7 +142,7 @@ def main():
     expected_count = total_attempts - WARMUP_SAMPLES
     success_rate = len(results) / expected_count
 
-    # 7. Final Report Data
+    # 6. Final Report
     report = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "samples_attempted": expected_count,
@@ -159,7 +158,6 @@ def main():
         "host_total_time_s": host_end_time - host_start_time
     }
 
-    # Print Report
     print("\n" + "="*40)
     print("      STM32 BNN BENCHMARK REPORT")
     print("="*40)
@@ -178,7 +176,7 @@ def main():
     print(cm)
     print("="*40)
 
-    # Save to JSON for documentation
+    # Save to JSON
     report_file = REPORTS_DIR / "mcu_benchmark_results.json"
     with open(report_file, "w") as f:
         json.dump(report, f, indent=4)
