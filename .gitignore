@@ -115,3 +115,6 @@ dist/
 *.rar
 
 *.csv
+
+mcu/BNNana_inference/Debug/
+Release/
