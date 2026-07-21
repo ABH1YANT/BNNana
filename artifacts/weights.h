@@ -3,6 +3,7 @@
 #define BNN_WEIGHTS_H
 #include <stdint.h>
 
+#define NUM_HIDDEN_LAYERS 3
 #define INPUT_SIZE 17
 #define L0_SIZE 16
 #define L1_SIZE 16
@@ -22,5 +23,4 @@ extern const int16_t L2_B[16];
 
 extern const int8_t OUT_WEIGHTS[1][16];
 extern const int16_t OUT_BIAS;
-
 #endif

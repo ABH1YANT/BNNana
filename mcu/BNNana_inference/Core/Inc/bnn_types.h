@@ -1,4 +1,4 @@
-// Generated: 2026-07-21 22:53:43
+// Generated: 2026-07-21 23:06:47
 #ifndef BNN_TYPES_H
 #define BNN_TYPES_H
 

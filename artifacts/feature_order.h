@@ -1,6 +1,5 @@
 #ifndef FEATURE_ORDER_H
 #define FEATURE_ORDER_H
-
 typedef enum {
     FEAT_DESTINATION_PORT,
     FEAT_BWD_HEADER_LENGTH,
@@ -21,5 +20,4 @@ typedef enum {
     FEAT_RST_FLAG_COUNT,
     NUM_FEATURES = 17
 } FeatureIndex;
-
 #endif
