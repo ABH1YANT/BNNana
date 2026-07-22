@@ -21,8 +21,10 @@ class NIDSDataset(Dataset):
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.float32)
-    def __len__(self): return len(self.y)
-    def __getitem__(self, idx): return self.X[idx], self.y[idx]
+    def __len__(self): 
+        return len(self.y)
+    def __getitem__(self, idx): 
+        return self.X[idx], self.y[idx]
 
 def prepare_data():
     """
@@ -30,9 +32,18 @@ def prepare_data():
     splitting, and fits the MinMaxScaler (Layer 0).
     """
     print(f"Loading dataset from: {cfg.DATA_DIR}")
-    df = pd.read_csv(cfg.DATA_DIR / "master_dataset.csv")
+    
+    # Load the master processed CSV
+    master_path = cfg.DATA_DIR / "master_dataset.csv"
+    if not master_path.exists():
+        raise FileNotFoundError(f"Master dataset not found at {master_path}")
+        
+    df = pd.read_csv(master_path)
     
     # Load the specific features selected for this project
+    if not cfg.ARTIFACT_DIR.joinpath("selected_features.json").exists():
+        raise FileNotFoundError("selected_features.json missing from artifacts folder.")
+        
     with open(cfg.ARTIFACT_DIR / "selected_features.json", "r") as f:
         features = json.load(f)
 
@@ -40,6 +51,7 @@ def prepare_data():
     y = df["Label"].values
 
     # 1. Stratified split: 70% Train, 30% Temp (Val/Test)
+    # Stratification ensures DDoS/Benign ratio is preserved across sets
     X_train, X_temp, y_train, y_temp = train_test_split(
         X, y, test_size=0.30, stratify=y, random_state=cfg.RANDOM_SEED
     )
@@ -68,9 +80,9 @@ def train_model():
     """
     Orchestrates the BNN training session using parameters defined in config.py.
     """
-    print(f"\n" + "="*40)
-    print(f"🚀 BNN TRAINING SESSION START")
-    print(f"="*40)
+    print("\n" + "="*40)
+    print("BNN TRAINING SESSION START")
+    print("="*40)
     print(f"Architecture    : {cfg.INPUT_SIZE} -> {cfg.HIDDEN_LAYERS} -> {cfg.OUTPUT_SIZE}")
     print(f"Activation      : {cfg.ACTIVATION_TYPE}")
     print(f"Optimizer       : {cfg.OPTIMIZER_TYPE} (LR: {cfg.LEARNING_RATE})")
@@ -84,7 +96,7 @@ def train_model():
     # 1. Prepare Data
     train_loader, val_loader = prepare_data()
     
-    # 2. Instantiate BNN Model (BWNClassifier class now contains BNN logic)
+    # 2. Instantiate BNN Model
     model = BWNClassifier().to(cfg.DEVICE)
     
     # 3. Optimizer Factory
@@ -119,7 +131,7 @@ def train_model():
     # 7. Run Fit
     trainer.fit(train_loader, val_loader, cfg.NUM_EPOCHS)
     
-    print(f"\n✅ Training Complete.")
+    print("\n[OK] Training Complete.")
     print(f"Best Model Saved to: {cfg.MODEL_SAVE_PATH}")
     print("="*40 + "\n")
 

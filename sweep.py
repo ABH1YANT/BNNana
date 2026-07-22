@@ -9,14 +9,11 @@ from pathlib import Path
 
 # --- 1. Deep Search Space ---
 ARCHITECTURES = [
-    # 3 Layers
     [16, 16, 16], [32, 32, 32],
     [32, 16, 8], [8, 16, 32],
     [32, 24, 16],
-    # 4 Layers
     [16, 16, 16, 16], [32, 32, 32, 32],
     [32, 24, 16, 8], [8, 16, 24, 32],
-    # 5 Layers
     [16, 16, 16, 16, 16],
     [32, 32, 32, 32, 32],
     [32, 24, 16, 8, 4],
@@ -40,7 +37,6 @@ VERSIONED_REPORT_NAME = "bnn_v1_training_report.md"
 for d in [ALL_RUNS_DIR, CHAMPIONS_DIR, REPORTS_DIR / "sweeps"]:
     d.mkdir(parents=True, exist_ok=True)
 
-# FIXED: Use a standard string (no 'f' prefix) and escape literal braces with {{ }}
 CONFIG_TEMPLATE = """
 import torch
 import json
@@ -55,7 +51,6 @@ class Config:
     _feat_file = ARTIFACT_DIR / "selected_features.json"
     INPUT_SIZE = len(json.load(open(_feat_file))) if _feat_file.exists() else 17
     
-    # --- SWEEP PARAMETERS ---
     HIDDEN_LAYERS = {hidden_layers}
     OPTIMIZER_TYPE = "{optimizer}"
     LEARNING_RATE = {lr}
@@ -65,7 +60,6 @@ class Config:
     
     SIMULATE_FIXED_POINT = True
     FRACTIONAL_BITS = 8  
-    # ------------------------
 
     OUTPUT_SIZE = 1
     BATCH_SIZE = 64
@@ -89,11 +83,10 @@ cfg = Config()
 """
 
 def run_cmd(module):
-    # sys.executable ensures we use the same python as the sweep script
     cmd = [sys.executable, "-m", module]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"   ❌ Error in {module}: {result.stderr}")
+        print(f"   [!] Error in {module}: {result.stderr}")
         raise subprocess.CalledProcessError(result.returncode, cmd)
     return result.stdout
 
@@ -123,10 +116,10 @@ def main():
     start_idx = state["last_index"] + 1
 
     if start_idx >= len(grid):
-        print("✅ BNN v1 Sweep already complete.")
+        print("[OK] BNN v1 Sweep already complete.")
         return
 
-    print(f"🚀 Starting Deep BNN Sweep (v1): {len(grid)} experiments.")
+    print(f"STARTING DEEP BNN SWEEP (v1): {len(grid)} experiments.")
 
     try:
         for i in range(start_idx, len(grid)):
@@ -135,7 +128,6 @@ def main():
             
             print(f"\n>>> [{i+1}/{len(grid)}] RUNNING: {run_id}")
 
-            # 1. Update config.py
             with open(CONFIG_PATH, "w") as f:
                 f.write(CONFIG_TEMPLATE.format(
                     hidden_layers=layers, 
@@ -144,7 +136,6 @@ def main():
                     report_name=VERSIONED_REPORT_NAME
                 ))
 
-            # 2. Run Train & Evaluate
             start_time = time.time()
             try:
                 run_cmd("ml.train")
@@ -154,7 +145,6 @@ def main():
                 
             duration = time.time() - start_time
 
-            # 3. Collect Metrics
             try:
                 with open(REPORTS_DIR / "metrics.json", "r") as f:
                     m = json.load(f)
@@ -164,10 +154,8 @@ def main():
                 m['duration_s'] = duration
                 state["results"].append(m)
 
-                # 4. Archive Model
                 shutil.copy(ROOT / "artifacts" / "best_bwn_model.pth", ALL_RUNS_DIR / f"{run_id}.pth")
 
-                # 5. Update Champions
                 for metric in state["champions"].keys():
                     if m[metric] > state["champions"][metric]["score"]:
                         state["champions"][metric]["score"] = m[metric]
@@ -177,18 +165,17 @@ def main():
                             json.dump(m, f, indent=4)
 
             except Exception as e:
-                print(f"   ⚠️ Metrics error: {e}")
+                print(f"   [!] Metrics error: {e}")
 
-            # 6. Save State
             state["last_index"] = i
             save_state(state)
             pd.DataFrame(state["results"]).to_csv(SUMMARY_CSV, index=False)
 
     except KeyboardInterrupt:
-        print("\n🛑 Sweep paused.")
+        print("\n[!] Sweep paused.")
         sys.exit(0)
 
-    print("\n" + "="*60 + "\n🏆 BNN v1 SWEEP COMPLETE 🏆\n" + "="*60)
+    print("\n" + "="*60 + "\nDEEP BNN v1 SWEEP COMPLETE\n" + "="*60)
 
 if __name__ == "__main__":
     main()
