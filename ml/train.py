@@ -70,9 +70,9 @@ def prepare_data():
     # Save scaler for MCU/FPGA export and evaluation
     joblib.dump(scaler, cfg.SCALER_PATH)
     print(f"Scaler saved to {cfg.SCALER_PATH}")
-    
-    train_loader = DataLoader(NIDSDataset(X_train, y_train), batch_size=cfg.BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(NIDSDataset(X_val, y_val), batch_size=cfg.BATCH_SIZE)
+
+    train_loader = DataLoader(NIDSDataset(X_train, y_train), batch_size=cfg.BATCH_SIZE, shuffle=True, num_workers=4, num_workers=4, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(NIDSDataset(X_val, y_val), batch_size=cfg.BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True,)
     
     return train_loader, val_loader
 
