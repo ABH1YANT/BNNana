@@ -12,9 +12,9 @@ class Config:
     _feat_file = ARTIFACT_DIR / "selected_features.json"
     INPUT_SIZE = len(json.load(open(_feat_file))) if _feat_file.exists() else 17
     
-    HIDDEN_LAYERS = [16, 16, 16]
-    OPTIMIZER_TYPE = "Adam"
-    LEARNING_RATE = 0.001
+    HIDDEN_LAYERS = [32, 32, 16, 16, 8]
+    OPTIMIZER_TYPE = "SGD"
+    LEARNING_RATE = 0.0005
     
     ACTIVATION_TYPE = "BinarySign" 
     ACTIVATION_PARAMS = {} 
@@ -23,7 +23,7 @@ class Config:
     FRACTIONAL_BITS = 8  
 
     OUTPUT_SIZE = 1
-    BATCH_SIZE = 64
+    BATCH_SIZE = 1024
     NUM_EPOCHS = 50        
     RANDOM_SEED = 42
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
