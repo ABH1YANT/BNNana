@@ -1,7 +1,6 @@
 """
 evaluator.py
-Provides the Evaluator class to compute classification metrics.
-Essential for comparing different hyperparameter configurations.
+Standardized inference engine for BNN classification metrics.
 """
 
 import torch
@@ -15,7 +14,8 @@ class Evaluator:
 
     def get_metrics(self, loader):
         """
-        Runs inference and calculates standardized classification metrics.
+        Runs inference and calculates metrics.
+        Handles logit-based thresholding for BNNs.
         """
         self.model.eval()
         all_preds = []
@@ -25,12 +25,13 @@ class Evaluator:
             for inputs, labels in loader:
                 inputs = inputs.to(self.device)
                 
-                # Forward pass (logits)
+                # Forward pass (returns raw logits)
                 logits = self.model(inputs)
                 
-                # Apply sigmoid to get probabilities for binary classification
-                probs = torch.sigmoid(logits)
-                preds = (probs > 0.5).float()
+                # BNN Decision Rule: 
+                # If logit > 0, class is 1 (DDoS). 
+                # This is equivalent to sigmoid(x) > 0.5.
+                preds = (logits > 0).float()
 
                 all_preds.extend(preds.cpu().numpy().flatten().tolist())
                 all_labels.extend(labels.numpy().flatten().tolist())

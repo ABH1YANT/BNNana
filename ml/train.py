@@ -5,6 +5,7 @@ Entry point for training and hyperparameter tuning.
 
 import torch
 import joblib
+import json
 import pandas as pd
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
@@ -23,15 +24,16 @@ class NIDSDataset(Dataset):
     def __getitem__(self, idx): return self.X[idx], self.y[idx]
 
 def prepare_data():
+    print("Loading dataset and selected features...")
     df = pd.read_csv(cfg.DATA_DIR / "master_dataset.csv")
-    # Load features used during feature selection
-    import json
+    
     with open(cfg.ARTIFACT_DIR / "selected_features.json", "r") as f:
         features = json.load(f)
 
     X = df[features].values
     y = df["Label"].values
 
+    # Stratified split to maintain DDoS/Benign ratio
     X_train, X_temp, y_train, y_temp = train_test_split(
         X, y, test_size=0.30, stratify=y, random_state=cfg.RANDOM_SEED
     )
@@ -39,23 +41,28 @@ def prepare_data():
         X_temp, y_temp, test_size=0.50, stratify=y_temp, random_state=cfg.RANDOM_SEED
     )
 
+    # Standard MinMaxScaler (Layer 0 normalization)
     scaler = MinMaxScaler()
     X_train = scaler.fit_transform(X_train)
     X_val = scaler.transform(X_val)
     
     joblib.dump(scaler, cfg.SCALER_PATH)
+    print(f"Scaler saved to {cfg.SCALER_PATH}")
     
-    return (
-        DataLoader(NIDSDataset(X_train, y_train), batch_size=cfg.BATCH_SIZE, shuffle=True),
-        DataLoader(NIDSDataset(X_val, y_val), batch_size=cfg.BATCH_SIZE),
-    )
+    train_loader = DataLoader(NIDSDataset(X_train, y_train), batch_size=cfg.BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(NIDSDataset(X_val, y_val), batch_size=cfg.BATCH_SIZE)
+    
+    return train_loader, val_loader
 
 def train_model():
-    print(f"Configuring Model: {len(cfg.HIDDEN_LAYERS)} Hidden Layers | Device: {cfg.DEVICE}")
+    print(f"--- BNN Training Session ---")
+    print(f"Architecture: {cfg.INPUT_SIZE} -> {cfg.HIDDEN_LAYERS} -> {cfg.OUTPUT_SIZE}")
+    print(f"Activation: {cfg.ACTIVATION_TYPE}")
+    print(f"Hardware Simulation: {'Enabled (Q8.' + str(cfg.FRACTIONAL_BITS) + ')' if cfg.SIMULATE_FIXED_POINT else 'Disabled'}")
     
     train_loader, val_loader = prepare_data()
     
-    # 1. Instantiate Model
+    # 1. Instantiate BNN Model
     model = BWNClassifier().to(cfg.DEVICE)
     
     # 2. Optimizer Factory
@@ -74,9 +81,10 @@ def train_model():
         patience=cfg.SCHEDULER_PATIENCE
     )
     
+    # 4. Loss Factory (BCE or SquaredHinge)
     criterion = get_criterion()
     
-    # 4. Trainer
+    # 5. Training Engine
     trainer = Trainer(
         model=model, 
         criterion=criterion, 
@@ -87,10 +95,7 @@ def train_model():
     )
     
     trainer.fit(train_loader, val_loader, cfg.NUM_EPOCHS)
-    
-    # Save Final Artifact
-    torch.save(model.state_dict(), cfg.MODEL_SAVE_PATH)
-    print(f"Training Complete. Model saved to {cfg.MODEL_SAVE_PATH}")
+    print(f"Training Complete. Best model saved to {cfg.MODEL_SAVE_PATH}")
 
 if __name__ == "__main__":
     train_model()

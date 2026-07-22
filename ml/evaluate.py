@@ -1,6 +1,6 @@
 """
 evaluate.py
-Loads a specific trained model and generates a detailed Markdown report and JSON metrics.
+Loads a trained BNN model and generates a detailed Markdown report and JSON metrics.
 """
 
 import torch
@@ -28,21 +28,20 @@ def append_markdown_report(metrics, path, model_name):
     cm = metrics['confusion_matrix']
     file_exists = Path(path).exists()
     
-    # Format hidden layers for the report
     layers_str = " -> ".join(map(str, cfg.HIDDEN_LAYERS))
+    hw_sim = f"Enabled (Q8.{cfg.FRACTIONAL_BITS})" if cfg.SIMULATE_FIXED_POINT else "Disabled"
     
     report_entry = f"""
 ## Run Date: {timestamp}
-**Evaluated Model File:** `{model_name}`
+**Evaluated Model:** `{model_name}`
 
 ### 1. Model Configuration
 | Parameter | Value |
 | :--- | :--- |
-| **Input Features** | {cfg.INPUT_SIZE} |
 | **Architecture** | {layers_str} |
 | **Activation** | {cfg.ACTIVATION_TYPE} |
+| **Hardware Simulation** | {hw_sim} |
 | **Optimizer** | {cfg.OPTIMIZER_TYPE} |
-| **Batch Size** | {cfg.BATCH_SIZE} |
 | **Loss Function** | {cfg.LOSS_TYPE} |
 
 ### 2. Performance Metrics
@@ -63,14 +62,21 @@ def append_markdown_report(metrics, path, model_name):
 """
     with open(path, "a") as f:
         if not file_exists:
-            f.write("# BWN Training & Evaluation History\n")
+            f.write("# BNN Training & Evaluation History\n")
         f.write(report_entry)
 
-def main():
-    # --- TARGET MODEL PATH ---
-    TARGET_MODEL_PATH = Path(r"C:\Users\a\Desktop\BNNana\models\all_runs\run_33_L3_Arch16-16-16_Adam_LR0.001.pth")
-    
-    print(f"Loading test data for evaluation (Seed: {cfg.RANDOM_SEED})...")
+def main(model_path=None):
+    # Use provided path or default to the best model in artifacts
+    if model_path is None:
+        target_path = cfg.MODEL_SAVE_PATH
+    else:
+        target_path = Path(model_path)
+
+    if not target_path.exists():
+        print(f"Error: Model not found at {target_path}")
+        return
+
+    print(f"Preparing test data (Seed: {cfg.RANDOM_SEED})...")
     df = pd.read_csv(cfg.DATA_DIR / "master_dataset.csv")
     
     with open(cfg.ARTIFACT_DIR / "selected_features.json", "r") as f:
@@ -79,7 +85,7 @@ def main():
     X = df[selected_features].values
     y = df["Label"].values
 
-    # Replicate the split used in training to isolate the test set
+    # Split logic must match train.py exactly
     _, X_temp, _, y_temp = train_test_split(
         X, y, test_size=0.30, stratify=y, random_state=cfg.RANDOM_SEED
     )
@@ -91,24 +97,25 @@ def main():
     X_test_scaled = scaler.transform(X_test)
     test_loader = DataLoader(NIDSDataset(X_test_scaled, y_test), batch_size=cfg.BATCH_SIZE)
 
-    # Instantiate modular model
+    # Instantiate BNN model
     model = BWNClassifier()
-    
-    print(f"Loading weights from: {TARGET_MODEL_PATH.name}")
-    model.load_state_dict(torch.load(TARGET_MODEL_PATH, map_location=cfg.DEVICE))
+    print(f"Loading weights from: {target_path.name}")
+    model.load_state_dict(torch.load(target_path, map_location=cfg.DEVICE))
     model.to(cfg.DEVICE)
 
-    print("Running Inference...")
+    print("Running Hardware-Aware Inference...")
     evaluator = Evaluator(model, cfg.DEVICE)
     metrics = evaluator.get_metrics(test_loader)
 
-    # Save JSON metrics
+    # Save JSON metrics to reports/
     with open(cfg.METRICS_PATH, "w") as f:
         json.dump(metrics, f, indent=4)
 
     # Append to Markdown Report
-    append_markdown_report(metrics, cfg.REPORT_PATH, TARGET_MODEL_PATH.name)
+    append_markdown_report(metrics, cfg.REPORT_PATH, target_path.name)
     print(f"Evaluation Complete. Results appended to {cfg.REPORT_PATH}")
 
 if __name__ == "__main__":
+    # Example: To evaluate a specific run, pass the path here
+    # main(cfg.ROOT / "models" / "all_runs" / "run_33_L3_Arch16-16-16_Adam_LR0.001.pth")
     main()

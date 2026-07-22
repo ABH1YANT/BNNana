@@ -7,20 +7,27 @@ import sys
 import time
 from pathlib import Path
 
-# --- 1. Search Space (13 Archs * 2 Opts * 2 LRs = 52 Runs) ---
 ARCHITECTURES = [
-    [16], [32],                          # 1 Layer
-    [16, 16], [32, 32], [32, 16],        # 2 Layers (Symmetric + Bottleneck)
-    [16, 32], [24, 24], [24, 12],        # 2 Layers (Expansion + Funnel)
-    [16, 16, 16], [32, 32, 32],          # 3 Layers (Symmetric)
-    [32, 16, 8], [8, 16, 32],            # 3 Layers (Funnel + Expansion)
-    [32, 24, 16]                         # 3 Layers (Gradual Funnel)
+    # 3 Layers
+    [16, 16, 16], [32, 32, 32],          # Symmetric
+    [32, 16, 8], [8, 16, 32],            # Funnel / Expansion
+    [32, 24, 16],                        # Gradual Funnel
+    
+    # 4 Layers
+    [16, 16, 16, 16], [32, 32, 32, 32],  # Symmetric
+    [32, 24, 16, 8], [8, 16, 24, 32],    # Funnel / Expansion
+    
+    # 5 Layers
+    [16, 16, 16, 16, 16],                # Symmetric Small
+    [32, 32, 32, 32, 32],                # Symmetric Large
+    [32, 24, 16, 8, 4],                  # Deep Funnel
+    [32, 32, 16, 16, 8]                  # Step Funnel
 ]
 OPTIMIZERS = ["Adam", "SGD"]
 LEARNING_RATES = [0.001, 0.0005]
 
-# --- 2. Absolute Path Configuration ---
-ROOT = Path(r"C:\Users\a\Desktop\BNNana")
+# --- 2. Generalized Path Configuration ---
+ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "ml" / "config.py"
 MODELS_ROOT = ROOT / "models"
 ALL_RUNS_DIR = MODELS_ROOT / "all_runs"
@@ -33,14 +40,14 @@ SUMMARY_CSV = REPORTS_DIR / "sweeps" / "mega_sweep_summary.csv"
 for d in [ALL_RUNS_DIR, CHAMPIONS_DIR, REPORTS_DIR / "sweeps"]:
     d.mkdir(parents=True, exist_ok=True)
 
-# The template that will be written to ml/config.py for every run
+# Template with BNN / Hardware-Aware parameters
 CONFIG_TEMPLATE = """
 import torch
 import json
 from pathlib import Path
 
 class Config:
-    ROOT = Path(r"C:\\Users\\a\\Desktop\\BNNana")
+    ROOT = Path(__file__).resolve().parent.parent
     DATA_DIR = ROOT / "datasets" / "processed"
     ARTIFACT_DIR = ROOT / "artifacts"
     REPORT_DIR = ROOT / "reports"
@@ -52,23 +59,26 @@ class Config:
     HIDDEN_LAYERS = {hidden_layers}
     OPTIMIZER_TYPE = "{optimizer}"
     LEARNING_RATE = {lr}
+    
+    ACTIVATION_TYPE = "BinarySign" 
+    ACTIVATION_PARAMS = {{}} 
+    
+    SIMULATE_FIXED_POINT = True
+    FRACTIONAL_BITS = 8  
     # ------------------------
 
     OUTPUT_SIZE = 1
-    ACTIVATION_TYPE = "Hardtanh"  # Standard for BNN/BWN
-    ACTIVATION_PARAMS = {{"min_val": 0.0, "max_val": 1.0}}
-    
     BATCH_SIZE = 64
-    NUM_EPOCHS = 40 
+    NUM_EPOCHS = 50        
     RANDOM_SEED = 42
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     WEIGHT_DECAY = 1e-5
     SCHEDULER_FACTOR = 0.5
-    SCHEDULER_PATIENCE = 3
-    EARLY_STOPPING_PATIENCE = 8
+    SCHEDULER_PATIENCE = 4
+    EARLY_STOPPING_PATIENCE = 10
     LOSS_TYPE = "BCEWithLogits"
-    POS_WEIGHT = 1.2  # Slight boost for DDoS class
+    POS_WEIGHT = 1.2
 
     MODEL_SAVE_PATH = ARTIFACT_DIR / "best_bwn_model.pth"
     SCALER_PATH = ARTIFACT_DIR / "scaler.pkl"
@@ -79,14 +89,13 @@ cfg = Config()
 """
 
 def run_cmd(cmd):
-    # check=True will stop the sweep if a training run crashes
-    subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+    full_cmd = f"{sys.executable} -m {cmd}"
+    subprocess.run(full_cmd, shell=True, check=True, capture_output=True, text=True)
 
 def load_state():
     if STATE_FILE.exists():
         with open(STATE_FILE, "r") as f:
             return json.load(f)
-    # Use SINGLE braces here because this is actual Python code
     return {
         "last_index": -1,
         "champions": {
@@ -109,12 +118,10 @@ def main():
     start_idx = state["last_index"] + 1
 
     if start_idx >= len(grid):
-        print("✅ Sweep already complete. Delete sweep_state.json to restart.")
+        print("✅ Sweep already complete.")
         return
 
-    print(f"🚀 Starting Mega-Sweep: {len(grid)} experiments total.")
-    print(f"📂 Reports: {REPORTS_DIR}")
-    print(f"📂 Models: {MODELS_ROOT}")
+    print(f"🚀 Starting Deep BNN Sweep: {len(grid)} experiments (3-5 Layers).")
 
     try:
         for i in range(start_idx, len(grid)):
@@ -123,17 +130,19 @@ def main():
             
             print(f"\n>>> [{i+1}/{len(grid)}] RUNNING: {run_id}")
 
-            # 1. Update config.py
             with open(CONFIG_PATH, "w") as f:
                 f.write(CONFIG_TEMPLATE.format(hidden_layers=layers, optimizer=opt, lr=lr))
 
-            # 2. Run Train & Evaluate
             start_time = time.time()
-            run_cmd("python -m ml.train")
-            run_cmd("python -m ml.evaluate")
+            try:
+                run_cmd("ml.train")
+                run_cmd("ml.evaluate")
+            except Exception as e:
+                print(f"   ❌ Run {run_id} failed. Moving to next.")
+                continue
+                
             duration = time.time() - start_time
 
-            # 3. Collect Metrics
             try:
                 with open(REPORTS_DIR / "metrics.json", "r") as f:
                     m = json.load(f)
@@ -143,38 +152,32 @@ def main():
                 m['duration_s'] = duration
                 state["results"].append(m)
 
-                # 4. Archive Model
                 shutil.copy(ROOT / "artifacts" / "best_bwn_model.pth", ALL_RUNS_DIR / f"{run_id}.pth")
 
-                # 5. Update Champions
                 for metric in state["champions"].keys():
                     if m[metric] > state["champions"][metric]["score"]:
                         state["champions"][metric]["score"] = m[metric]
                         state["champions"][metric]["id"] = run_id
-                        
-                        # Save Champion
                         shutil.copy(ROOT / "artifacts" / "best_bwn_model.pth", CHAMPIONS_DIR / f"top_{metric}.pth")
                         with open(CHAMPIONS_DIR / f"top_{metric}_info.json", "w") as f:
                             json.dump(m, f, indent=4)
 
             except Exception as e:
-                print(f"   ⚠️ Error processing metrics for {run_id}: {e}")
+                print(f"   ⚠️ Metrics error: {e}")
 
-            # 6. Save State & CSV
             state["last_index"] = i
             save_state(state)
             pd.DataFrame(state["results"]).to_csv(SUMMARY_CSV, index=False)
 
     except KeyboardInterrupt:
-        print("\n🛑 Sweep paused by user. Run again to resume from this point.")
+        print("\n🛑 Sweep paused. Run again to resume.")
         sys.exit(0)
 
     print("\n" + "="*60)
-    print("🏆 MEGA-SWEEP COMPLETE 🏆")
+    print("🏆 DEEP BNN SWEEP COMPLETE 🏆")
     print("="*60)
     for metric, data in state["champions"].items():
         print(f"Best {metric.upper():<10}: {data['score']:.4f} ({data['id']})")
-    print("="*60)
 
 if __name__ == "__main__":
     main()
