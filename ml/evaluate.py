@@ -1,6 +1,6 @@
 """
 evaluate.py
-Loads a trained BNN model and generates a detailed Markdown report and JSON metrics.
+Loads a trained BNN model and generates a versioned Markdown report (bnn_v1) and JSON metrics.
 """
 
 import torch
@@ -26,7 +26,8 @@ class NIDSDataset(Dataset):
 def append_markdown_report(metrics, path, model_name):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cm = metrics['confusion_matrix']
-    file_exists = Path(path).exists()
+    path = Path(path)
+    file_exists = path.exists()
     
     layers_str = " -> ".join(map(str, cfg.HIDDEN_LAYERS))
     hw_sim = f"Enabled (Q8.{cfg.FRACTIONAL_BITS})" if cfg.SIMULATE_FIXED_POINT else "Disabled"
@@ -62,10 +63,14 @@ def append_markdown_report(metrics, path, model_name):
 """
     with open(path, "a") as f:
         if not file_exists:
-            f.write("# BNN Training & Evaluation History\n")
+            f.write("# BNN v1 Training & Evaluation History\n")
+            f.write("This report tracks the performance of Binarized Neural Network architectures.\n")
         f.write(report_entry)
 
 def main(model_path=None):
+    # --- NEW REPORT FILENAME ---
+    NEW_REPORT_PATH = cfg.REPORT_DIR / "bnn_v1_training_report.md"
+    
     # Use provided path or default to the best model in artifacts
     if model_path is None:
         target_path = cfg.MODEL_SAVE_PATH
@@ -111,11 +116,9 @@ def main(model_path=None):
     with open(cfg.METRICS_PATH, "w") as f:
         json.dump(metrics, f, indent=4)
 
-    # Append to Markdown Report
-    append_markdown_report(metrics, cfg.REPORT_PATH, target_path.name)
-    print(f"Evaluation Complete. Results appended to {cfg.REPORT_PATH}")
+    # Append to the NEW Markdown Report
+    append_markdown_report(metrics, NEW_REPORT_PATH, target_path.name)
+    print(f"Evaluation Complete. Results appended to {NEW_REPORT_PATH}")
 
 if __name__ == "__main__":
-    # Example: To evaluate a specific run, pass the path here
-    # main(cfg.ROOT / "models" / "all_runs" / "run_33_L3_Arch16-16-16_Adam_LR0.001.pth")
     main()

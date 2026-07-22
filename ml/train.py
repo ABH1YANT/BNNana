@@ -1,6 +1,7 @@
 """
 train.py
-Entry point for training and hyperparameter tuning.
+Entry point for training the Binarized Neural Network (BNN).
+Handles data scaling, stratified splitting, and hardware-aware training orchestration.
 """
 
 import torch
@@ -24,28 +25,37 @@ class NIDSDataset(Dataset):
     def __getitem__(self, idx): return self.X[idx], self.y[idx]
 
 def prepare_data():
-    print("Loading dataset and selected features...")
+    """
+    Loads master dataset, applies feature selection, performs stratified 
+    splitting, and fits the MinMaxScaler (Layer 0).
+    """
+    print(f"Loading dataset from: {cfg.DATA_DIR}")
     df = pd.read_csv(cfg.DATA_DIR / "master_dataset.csv")
     
+    # Load the specific features selected for this project
     with open(cfg.ARTIFACT_DIR / "selected_features.json", "r") as f:
         features = json.load(f)
 
     X = df[features].values
     y = df["Label"].values
 
-    # Stratified split to maintain DDoS/Benign ratio
+    # 1. Stratified split: 70% Train, 30% Temp (Val/Test)
     X_train, X_temp, y_train, y_temp = train_test_split(
         X, y, test_size=0.30, stratify=y, random_state=cfg.RANDOM_SEED
     )
+    
+    # 2. Split Temp into 50% Val, 50% Test (15% of total each)
     X_val, X_test, y_val, y_test = train_test_split(
         X_temp, y_temp, test_size=0.50, stratify=y_temp, random_state=cfg.RANDOM_SEED
     )
 
-    # Standard MinMaxScaler (Layer 0 normalization)
+    # 3. MinMaxScaler (The "Layer 0" of the hardware pipeline)
     scaler = MinMaxScaler()
     X_train = scaler.fit_transform(X_train)
     X_val = scaler.transform(X_val)
+    # Note: X_test is transformed in evaluate.py using the saved scaler
     
+    # Save scaler for MCU/FPGA export and evaluation
     joblib.dump(scaler, cfg.SCALER_PATH)
     print(f"Scaler saved to {cfg.SCALER_PATH}")
     
@@ -55,17 +65,29 @@ def prepare_data():
     return train_loader, val_loader
 
 def train_model():
-    print(f"--- BNN Training Session ---")
-    print(f"Architecture: {cfg.INPUT_SIZE} -> {cfg.HIDDEN_LAYERS} -> {cfg.OUTPUT_SIZE}")
-    print(f"Activation: {cfg.ACTIVATION_TYPE}")
-    print(f"Hardware Simulation: {'Enabled (Q8.' + str(cfg.FRACTIONAL_BITS) + ')' if cfg.SIMULATE_FIXED_POINT else 'Disabled'}")
+    """
+    Orchestrates the BNN training session using parameters defined in config.py.
+    """
+    print(f"\n" + "="*40)
+    print(f"🚀 BNN TRAINING SESSION START")
+    print(f"="*40)
+    print(f"Architecture    : {cfg.INPUT_SIZE} -> {cfg.HIDDEN_LAYERS} -> {cfg.OUTPUT_SIZE}")
+    print(f"Activation      : {cfg.ACTIVATION_TYPE}")
+    print(f"Optimizer       : {cfg.OPTIMIZER_TYPE} (LR: {cfg.LEARNING_RATE})")
+    print(f"Loss Function   : {cfg.LOSS_TYPE}")
     
+    hw_status = f"Enabled (Q8.{cfg.FRACTIONAL_BITS})" if cfg.SIMULATE_FIXED_POINT else "Disabled"
+    print(f"Hardware Sim    : {hw_status}")
+    print(f"Device          : {cfg.DEVICE}")
+    print("-" * 40)
+    
+    # 1. Prepare Data
     train_loader, val_loader = prepare_data()
     
-    # 1. Instantiate BNN Model
+    # 2. Instantiate BNN Model (BWNClassifier class now contains BNN logic)
     model = BWNClassifier().to(cfg.DEVICE)
     
-    # 2. Optimizer Factory
+    # 3. Optimizer Factory
     opt_class = getattr(torch.optim, cfg.OPTIMIZER_TYPE)
     optimizer = opt_class(
         model.parameters(), 
@@ -73,7 +95,7 @@ def train_model():
         weight_decay=cfg.WEIGHT_DECAY
     )
     
-    # 3. Scheduler Factory
+    # 4. Scheduler Factory (ReduceLROnPlateau)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, 
         mode='min', 
@@ -81,10 +103,10 @@ def train_model():
         patience=cfg.SCHEDULER_PATIENCE
     )
     
-    # 4. Loss Factory (BCE or SquaredHinge)
+    # 5. Loss Factory
     criterion = get_criterion()
     
-    # 5. Training Engine
+    # 6. Training Engine (Handles weight clipping and STE)
     trainer = Trainer(
         model=model, 
         criterion=criterion, 
@@ -94,8 +116,12 @@ def train_model():
         scheduler=scheduler
     )
     
+    # 7. Run Fit
     trainer.fit(train_loader, val_loader, cfg.NUM_EPOCHS)
-    print(f"Training Complete. Best model saved to {cfg.MODEL_SAVE_PATH}")
+    
+    print(f"\n✅ Training Complete.")
+    print(f"Best Model Saved to: {cfg.MODEL_SAVE_PATH}")
+    print("="*40 + "\n")
 
 if __name__ == "__main__":
     train_model()
