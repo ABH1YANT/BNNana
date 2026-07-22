@@ -7,22 +7,20 @@ import sys
 import time
 from pathlib import Path
 
-# --- 1. Deep Search Space (13 Archs * 2 Opts * 2 LRs = 52 Runs) ---
+# --- 1. Deep Search Space ---
 ARCHITECTURES = [
     # 3 Layers
-    [16, 16, 16], [32, 32, 32],          # Symmetric
-    [32, 16, 8], [8, 16, 32],            # Funnel / Expansion
-    [32, 24, 16],                        # Gradual Funnel
-    
+    [16, 16, 16], [32, 32, 32],
+    [32, 16, 8], [8, 16, 32],
+    [32, 24, 16],
     # 4 Layers
-    [16, 16, 16, 16], [32, 32, 32, 32],  # Symmetric
-    [32, 24, 16, 8], [8, 16, 24, 32],    # Funnel / Expansion
-    
+    [16, 16, 16, 16], [32, 32, 32, 32],
+    [32, 24, 16, 8], [8, 16, 24, 32],
     # 5 Layers
-    [16, 16, 16, 16, 16],                # Symmetric Small
-    [32, 32, 32, 32, 32],                # Symmetric Large
-    [32, 24, 16, 8, 4],                  # Deep Funnel
-    [32, 32, 16, 16, 8]                  # Step Funnel
+    [16, 16, 16, 16, 16],
+    [32, 32, 32, 32, 32],
+    [32, 24, 16, 8, 4],
+    [32, 32, 16, 16, 8]
 ]
 OPTIMIZERS = ["Adam", "SGD"]
 LEARNING_RATES = [0.001, 0.0005]
@@ -35,17 +33,15 @@ ALL_RUNS_DIR = MODELS_ROOT / "all_runs"
 CHAMPIONS_DIR = MODELS_ROOT / "bnn_v1_champions"
 REPORTS_DIR = ROOT / "reports"
 
-# Versioned Sweep Files
 STATE_FILE = REPORTS_DIR / "sweeps" / "bnn_v1_sweep_state.json"
 SUMMARY_CSV = REPORTS_DIR / "sweeps" / "bnn_v1_mega_sweep_summary.csv"
 VERSIONED_REPORT_NAME = "bnn_v1_training_report.md"
 
-# Ensure directories exist
 for d in [ALL_RUNS_DIR, CHAMPIONS_DIR, REPORTS_DIR / "sweeps"]:
     d.mkdir(parents=True, exist_ok=True)
 
-# Template with BNN / Hardware-Aware parameters and Versioned Report Path
-CONFIG_TEMPLATE = f"""
+# FIXED: Use a standard string (no 'f' prefix) and escape literal braces with {{ }}
+CONFIG_TEMPLATE = """
 import torch
 import json
 from pathlib import Path
@@ -60,9 +56,9 @@ class Config:
     INPUT_SIZE = len(json.load(open(_feat_file))) if _feat_file.exists() else 17
     
     # --- SWEEP PARAMETERS ---
-    HIDDEN_LAYERS = {{hidden_layers}}
-    OPTIMIZER_TYPE = "{{optimizer}}"
-    LEARNING_RATE = {{lr}}
+    HIDDEN_LAYERS = {hidden_layers}
+    OPTIMIZER_TYPE = "{optimizer}"
+    LEARNING_RATE = {lr}
     
     ACTIVATION_TYPE = "BinarySign" 
     ACTIVATION_PARAMS = {{}} 
@@ -87,18 +83,17 @@ class Config:
     MODEL_SAVE_PATH = ARTIFACT_DIR / "best_bwn_model.pth"
     SCALER_PATH = ARTIFACT_DIR / "scaler.pkl"
     METRICS_PATH = REPORT_DIR / "metrics.json"
-    REPORT_PATH = REPORT_DIR / "{VERSIONED_REPORT_NAME}"
+    REPORT_PATH = REPORT_DIR / "{report_name}"
 
 cfg = Config()
 """
 
-def run_cmd(cmd):
-    """Runs a python module as a subprocess."""
-    full_cmd = [sys.executable, "-m", cmd]
-    # We capture output to keep the sweep console clean, but print on error
-    result = subprocess.run(full_cmd, capture_output=True, text=True)
+def run_cmd(module):
+    # sys.executable ensures we use the same python as the sweep script
+    cmd = [sys.executable, "-m", module]
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"   ❌ Error in {cmd}: {result.stderr}")
+        print(f"   ❌ Error in {module}: {result.stderr}")
         raise subprocess.CalledProcessError(result.returncode, cmd)
     return result.stdout
 
@@ -132,8 +127,6 @@ def main():
         return
 
     print(f"🚀 Starting Deep BNN Sweep (v1): {len(grid)} experiments.")
-    print(f"📂 Archiving models to: {ALL_RUNS_DIR}")
-    print(f"📝 Appending reports to: {VERSIONED_REPORT_NAME}")
 
     try:
         for i in range(start_idx, len(grid)):
@@ -142,9 +135,14 @@ def main():
             
             print(f"\n>>> [{i+1}/{len(grid)}] RUNNING: {run_id}")
 
-            # 1. Update config.py with current iteration parameters
+            # 1. Update config.py
             with open(CONFIG_PATH, "w") as f:
-                f.write(CONFIG_TEMPLATE.format(hidden_layers=layers, optimizer=opt, lr=lr))
+                f.write(CONFIG_TEMPLATE.format(
+                    hidden_layers=layers, 
+                    optimizer=opt, 
+                    lr=lr,
+                    report_name=VERSIONED_REPORT_NAME
+                ))
 
             # 2. Run Train & Evaluate
             start_time = time.time()
@@ -152,15 +150,13 @@ def main():
                 run_cmd("ml.train")
                 run_cmd("ml.evaluate")
             except Exception:
-                # Error message already printed in run_cmd
                 continue
                 
             duration = time.time() - start_time
 
-            # 3. Collect Metrics from the temporary metrics.json
+            # 3. Collect Metrics
             try:
-                metrics_file = REPORTS_DIR / "metrics.json"
-                with open(metrics_file, "r") as f:
+                with open(REPORTS_DIR / "metrics.json", "r") as f:
                     m = json.load(f)
                 
                 m['overall'] = (m['accuracy'] + m['f1_score']) / 2
@@ -168,39 +164,31 @@ def main():
                 m['duration_s'] = duration
                 state["results"].append(m)
 
-                # 4. Archive Model for this specific run
+                # 4. Archive Model
                 shutil.copy(ROOT / "artifacts" / "best_bwn_model.pth", ALL_RUNS_DIR / f"{run_id}.pth")
 
-                # 5. Update Champions Leaderboard
+                # 5. Update Champions
                 for metric in state["champions"].keys():
                     if m[metric] > state["champions"][metric]["score"]:
                         state["champions"][metric]["score"] = m[metric]
                         state["champions"][metric]["id"] = run_id
-                        
-                        # Save Champion Model
                         shutil.copy(ROOT / "artifacts" / "best_bwn_model.pth", CHAMPIONS_DIR / f"top_{metric}.pth")
-                        # Save Champion Info
                         with open(CHAMPIONS_DIR / f"top_{metric}_info.json", "w") as f:
                             json.dump(m, f, indent=4)
 
             except Exception as e:
-                print(f"   ⚠️ Metrics processing error for {run_id}: {e}")
+                print(f"   ⚠️ Metrics error: {e}")
 
-            # 6. Save State & CSV Summary
+            # 6. Save State
             state["last_index"] = i
             save_state(state)
             pd.DataFrame(state["results"]).to_csv(SUMMARY_CSV, index=False)
 
     except KeyboardInterrupt:
-        print("\n🛑 Sweep paused by user. Run again to resume from this index.")
+        print("\n🛑 Sweep paused.")
         sys.exit(0)
 
-    print("\n" + "="*60)
-    print("🏆 BNN v1 SWEEP COMPLETE 🏆")
-    print("="*60)
-    for metric, data in state["champions"].items():
-        print(f"Best {metric.upper():<10}: {data['score']:.4f} ({data['id']})")
-    print("="*60)
+    print("\n" + "="*60 + "\n🏆 BNN v1 SWEEP COMPLETE 🏆\n" + "="*60)
 
 if __name__ == "__main__":
     main()
