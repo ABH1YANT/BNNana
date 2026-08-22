@@ -1,9 +1,3 @@
-"""
-model.py
-Defines the BWNClassifier. The architecture is parameterized to allow 
-quick sweeps of hidden layer sizes (8, 16, 32, 64).
-"""
-
 import torch
 import torch.nn as nn
 from .layers import BinaryLinear
@@ -11,18 +5,12 @@ from .ste import binarize_activation
 from .config import cfg
 
 class BinarySign(nn.Module):
-    """
-    Activation layer that binarizes inputs to -1 or +1.
-    Uses the Straight-Through Estimator (STE) defined in ste.py.
-    """
+    """Activation layer that binarizes inputs to -1 or +1."""
     def forward(self, x):
         return binarize_activation(x)
 
 class Quantizer(nn.Module):
-    """
-    Simulates FPGA fixed-point arithmetic (e.g., Q8.8).
-    Used to mirror the precision of the FPGA's accumulators and BatchNorm logic.
-    """
+    """Simulates FPGA fixed-point arithmetic (e.g., Q8.8)."""
     def __init__(self, fractional_bits):
         super().__init__()
         self.scale = 2 ** fractional_bits
@@ -30,55 +18,84 @@ class Quantizer(nn.Module):
     def forward(self, x):
         if not cfg.SIMULATE_FIXED_POINT:
             return x
-        # Simulate rounding to fixed-point precision
         return torch.round(x * self.scale) / self.scale
+
+class BWNLayer(nn.Module):
+    """
+    A single BNN Layer: Linear -> Quant -> BN -> Act.
+    The 'Dense' logic is handled in the Classifier's forward pass.
+    """
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.linear = BinaryLinear(in_features, out_features)
+        self.quant = Quantizer(cfg.FRACTIONAL_BITS)
+        self.bn = nn.BatchNorm1d(out_features)
+        
+        if cfg.ACTIVATION_TYPE == "BinarySign":
+            self.activation = BinarySign()
+        else:
+            act_class = getattr(nn, cfg.ACTIVATION_TYPE)
+            self.activation = act_class(**cfg.ACTIVATION_PARAMS)
+
+    def forward(self, x):
+        x = self.linear(x)
+        x = self.quant(x)
+        x = self.bn(x)
+        x = self.activation(x)
+        return x
 
 class BWNClassifier(nn.Module):
     def __init__(self):
         super(BWNClassifier, self).__init__()
         
-        layers = []
-        in_features = cfg.INPUT_SIZE
-        
-        # 1. Input Quantizer (Simulate Q8.8 conversion of the 17 float features)
         self.input_quantizer = Quantizer(cfg.FRACTIONAL_BITS)
+        self.use_res = cfg.USE_RESIDUALS
         
-        # 2. Dynamically build hidden layers
+        self.layers = nn.ModuleList()
+        
+        # Track the cumulative input size
+        cumulative_size = cfg.INPUT_SIZE
+        
         for h_size in cfg.HIDDEN_LAYERS:
-            # Linear Layer with Binary Weights (sign(W))
-            layers.append(BinaryLinear(in_features, h_size))
+            # Create the layer with the current cumulative size
+            self.layers.append(BWNLayer(cumulative_size, h_size))
             
-            # Hardware-Aware: Quantize the accumulation result before BatchNorm
-            layers.append(Quantizer(cfg.FRACTIONAL_BITS))
-            
-            # BatchNorm (Crucial for centering data before the Sign function)
-            layers.append(nn.BatchNorm1d(h_size))
-            
-            # Binary Activation (sign(x))
-            if cfg.ACTIVATION_TYPE == "BinarySign":
-                layers.append(BinarySign())
+            if self.use_res:
+                # In Dense mode, the next layer's input grows by the size of this layer
+                cumulative_size += h_size
             else:
-                # Fallback for standard activations (ReLU, Hardtanh)
-                act_class = getattr(nn, cfg.ACTIVATION_TYPE)
-                layers.append(act_class(**cfg.ACTIVATION_PARAMS))
-            
-            in_features = h_size
-        
-        self.hidden_stack = nn.Sequential(*layers)
-        
-        # 3. Final Output Layer
-        # Input is ±1 (from last hidden layer), Weights are ±1.
-        # Result is a logit; we threshold at 0 during inference.
-        self.output_layer = BinaryLinear(in_features, cfg.OUTPUT_SIZE)
+                # In standard mode, the next layer's input is just this layer's output
+                cumulative_size = h_size
+                
+        # Final Output Layer
+        self.output_layer = BinaryLinear(cumulative_size, cfg.OUTPUT_SIZE)
 
     def forward(self, x):
-        # Quantize raw input features
+        # 1. Initial Quantization
         x = self.input_quantizer(x)
         
-        # Pass through binarized hidden layers
-        x = self.hidden_stack(x)
+        if self.use_res:
+            # --- DENSE RESIDUAL LOGIC ---
+            # List to store all previous outputs (including raw input)
+            features = [x]
+            
+            for layer in self.layers:
+                # Concatenate all previous features along the feature dimension (dim=1)
+                current_input = torch.cat(features, dim=1)
+                out = layer(current_input)
+                features.append(out)
+            
+            # Final layer receives the concatenation of EVERYTHING
+            final_input = torch.cat(features, dim=1)
+            
+        else:
+            # --- STANDARD FEED-FORWARD LOGIC ---
+            out = x
+            for layer in self.layers:
+                out = layer(out)
+            final_input = out
         
-        # Final linear layer
-        x = self.output_layer(x)
+        # 3. Final linear layer
+        logits = self.output_layer(final_input)
         
-        return x.squeeze(-1)
+        return logits.squeeze(-1)

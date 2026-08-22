@@ -8,6 +8,7 @@ import torch
 import joblib
 import json
 import pandas as pd
+import os
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
@@ -33,46 +34,59 @@ def prepare_data():
     """
     print(f"Loading dataset from: {cfg.DATA_DIR}")
     
-    # Load the master processed CSV
     master_path = cfg.DATA_DIR / "master_dataset.csv"
     if not master_path.exists():
         raise FileNotFoundError(f"Master dataset not found at {master_path}")
         
     df = pd.read_csv(master_path)
     
-    # Load the specific features selected for this project
-    if not cfg.ARTIFACT_DIR.joinpath("selected_features.json").exists():
+    feat_file = cfg.ARTIFACT_DIR / "selected_features.json"
+    if not feat_file.exists():
         raise FileNotFoundError("selected_features.json missing from artifacts folder.")
         
-    with open(cfg.ARTIFACT_DIR / "selected_features.json", "r") as f:
+    with open(feat_file, "r") as f:
         features = json.load(f)
 
     X = df[features].values
     y = df["Label"].values
 
-    # 1. Stratified split: 70% Train, 30% Temp (Val/Test)
-    # Stratification ensures DDoS/Benign ratio is preserved across sets
+    # 1. Stratified split: 70% Train, 15% Val, 15% Test
     X_train, X_temp, y_train, y_temp = train_test_split(
         X, y, test_size=0.30, stratify=y, random_state=cfg.RANDOM_SEED
     )
     
-    # 2. Split Temp into 50% Val, 50% Test (15% of total each)
     X_val, X_test, y_val, y_test = train_test_split(
         X_temp, y_temp, test_size=0.50, stratify=y_temp, random_state=cfg.RANDOM_SEED
     )
 
-    # 3. MinMaxScaler (The "Layer 0" of the hardware pipeline)
+    # 2. MinMaxScaler (The "Layer 0" of the hardware pipeline)
     scaler = MinMaxScaler()
     X_train = scaler.fit_transform(X_train)
     X_val = scaler.transform(X_val)
-    # Note: X_test is transformed in evaluate.py using the saved scaler
     
     # Save scaler for MCU/FPGA export and evaluation
     joblib.dump(scaler, cfg.SCALER_PATH)
     print(f"Scaler saved to {cfg.SCALER_PATH}")
 
-    train_loader = DataLoader(NIDSDataset(X_train, y_train), batch_size=cfg.BATCH_SIZE, shuffle=True, num_workers=4, num_workers=4, pin_memory=True, persistent_workers=True)
-    val_loader = DataLoader(NIDSDataset(X_val, y_val), batch_size=cfg.BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True,)
+    # Windows Safety: num_workers > 0 can cause issues in some IDEs/Environments
+    # Setting to 0 if on Windows and experiencing issues, otherwise 4 is fine.
+    num_cpus = 0 if os.name == 'nt' else 4 
+
+    train_loader = DataLoader(
+        NIDSDataset(X_train, y_train), 
+        batch_size=cfg.BATCH_SIZE, 
+        shuffle=True, 
+        num_workers=num_cpus, 
+        pin_memory=True
+    )
+    
+    val_loader = DataLoader(
+        NIDSDataset(X_val, y_val), 
+        batch_size=cfg.BATCH_SIZE, 
+        shuffle=False, 
+        num_workers=num_cpus, 
+        pin_memory=True
+    )
     
     return train_loader, val_loader
 
@@ -83,10 +97,14 @@ def train_model():
     print("\n" + "="*40)
     print("BNN TRAINING SESSION START")
     print("="*40)
-    print(f"Architecture    : {cfg.INPUT_SIZE} -> {cfg.HIDDEN_LAYERS} -> {cfg.OUTPUT_SIZE}")
+    print(f"Input Features  : {cfg.INPUT_SIZE}")
+    print(f"Hidden Layers   : {cfg.HIDDEN_LAYERS}")
+    
+    res_status = "Enabled" if cfg.USE_RESIDUALS else "Disabled"
+    print(f"Residuals       : {res_status}")
+    
     print(f"Activation      : {cfg.ACTIVATION_TYPE}")
     print(f"Optimizer       : {cfg.OPTIMIZER_TYPE} (LR: {cfg.LEARNING_RATE})")
-    print(f"Loss Function   : {cfg.LOSS_TYPE}")
     
     hw_status = f"Enabled (Q8.{cfg.FRACTIONAL_BITS})" if cfg.SIMULATE_FIXED_POINT else "Disabled"
     print(f"Hardware Sim    : {hw_status}")
@@ -118,7 +136,7 @@ def train_model():
     # 5. Loss Factory
     criterion = get_criterion()
     
-    # 6. Training Engine (Handles weight clipping and STE)
+    # 6. Training Engine
     trainer = Trainer(
         model=model, 
         criterion=criterion, 

@@ -69,7 +69,7 @@ def append_markdown_report(metrics, path, model_name):
 
 def main(model_path=None):
     # --- NEW REPORT FILENAME ---
-    NEW_REPORT_PATH = cfg.REPORT_DIR / "bnn_v1_training_report.md"
+    NEW_REPORT_PATH = cfg.REPORT_DIR / "bnn_v2_training_report.md"
     
     # Use provided path or default to the best model in artifacts
     if model_path is None:
