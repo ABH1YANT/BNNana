@@ -308,3 +308,30 @@ This report tracks the performance of Binarized Neural Network architectures.
 | **Actual DDoS** | 1819 | 28182 |
 
 ---
+## Evaluation Run: 2026-08-23 22:19:35
+**Model File:** `best_bnn_v2_model.pth`
+
+### 1. System Configuration
+| Parameter | Value |
+| :--- | :--- |
+| **Architecture** | 16 -> 16 -> 16 |
+| **Activation** | BinarySign |
+| **Hardware Simulation** | Enabled (Q8.8 Fixed-Point) |
+| **Preprocessing** | Log(1+x) + MinMaxScaler |
+| **Features Used** | 16 Behavioral Features |
+
+### 2. Performance Metrics
+| Metric | Score |
+| :--- | :--- |
+| **Accuracy** | 0.935618 |
+| **Precision** | 0.908151 |
+| **Recall** | 0.969268 |
+| **F1-Score** | 0.937715 |
+
+### 3. Confusion Matrix
+| | Predicted Benign | Predicted Attack |
+| :--- | :---: | :---: |
+| **Actual Benign** | 27059 | 2941 |
+| **Actual Attack** | 922 | 29079 |
+
+---
