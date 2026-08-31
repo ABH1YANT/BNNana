@@ -17,23 +17,12 @@ ARTIFACT_DIR = ROOT / "artifacts"
 RANDOM_SEED = 42
 
 TIER_1 = [
-    "Min Packet Length",
-    "Destination Port",
-    "Subflow Bwd Packets",
-    "Bwd Header Length",
-    "Total Backward Packets",
-    "min_seg_size_forward",
-    "Fwd Packet Length Max",
-    "Max Packet Length",
-    "Subflow Bwd Bytes",
-    "Bwd Packet Length Max",
-    "ACK Flag Count",
-    "Total Length of Bwd Packets",
-    "Flow Duration",
-    "Total Length of Fwd Packets",
-    "Subflow Fwd Bytes",
-    "Fwd Header Length",
-    "act_data_pkt_fwd"
+    "Destination Port", "Flow Duration", "Total Fwd Packets", "Total Backward Packets",
+    "Total Length of Fwd Packets", "Total Length of Bwd Packets", "Subflow Fwd Bytes",
+    "Subflow Bwd Bytes", "Subflow Fwd Packets", "Subflow Bwd Packets", "Max Packet Length",
+    "Min Packet Length", "Fwd Packet Length Max", "Bwd Packet Length Max", "ACK Flag Count",
+    "SYN Flag Count", "RST Flag Count", "FIN Flag Count", "PSH Flag Count", "URG Flag Count",
+    "Bwd Header Length", "Fwd Header Length", "min_seg_size_forward", "act_data_pkt_fwd"
 ]
 
 SUBSET_SIZES = [17, 15, 12, 10, 8]

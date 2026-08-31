@@ -2,6 +2,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import json
+import sys
 
 # ------------------------------------------------------------------
 # Configuration
@@ -9,13 +10,14 @@ import json
 ROOT = Path(r"C:\Users\a\Desktop\BNNana")
 DATASET_DIR = ROOT / "datasets" / "processed"
 OUTPUT_FILE = DATASET_DIR / "master_dataset.csv"
+SELECTED_FEATS_PATH = ROOT / "artifacts" / "selected_features.json"
 
-# Sampling Requirements
-BENIGN_FILE = "BENIGN.csv"
+# Sampling Targets
+TARGET_BENIGN = 200_000
+TARGET_ATTACK_PER_TYPE = 66_667 # Total ~200,001
+
 ATTACK_FILES = ["SYN.csv", "UDP.csv", "DNS.csv"]
-
-SAMPLES_BENIGN = 200_000
-SAMPLES_PER_ATTACK = 66_667  # 66,667 * 3 ≈ 200,000
+BENIGN_FILE = "BENIGN.csv"
 
 LABEL_MAP = {
     "BENIGN": "BENIGN",
@@ -24,119 +26,128 @@ LABEL_MAP = {
     "DNS": "DNS", "DrDoS_DNS": "DNS",
 }
 
-# 0 = Benign, 1 = Attack
-BINARY_ENCODING = {
-    "BENIGN": 0,
-    "SYN": 1,
-    "UDP": 1,
-    "DNS": 1
-}
+BINARY_ENCODING = {"BENIGN": 0, "SYN": 1, "UDP": 1, "DNS": 1}
 
 # ------------------------------------------------------------------
-# Helper: Clean and Filter
+# 1. Load Selected Features
 # ------------------------------------------------------------------
-def clean_and_sample(path, target_label, n_samples, exclude_benign=False):
-    print(f"Processing {path.name}...")
+if not SELECTED_FEATS_PATH.exists():
+    print(f"ERROR: {SELECTED_FEATS_PATH} not found.")
+    sys.exit(1)
+
+with open(SELECTED_FEATS_PATH, "r") as f:
+    SELECTED_FEATURES = json.load(f)
+
+print(f"Targeting {len(SELECTED_FEATURES)} features defined in artifacts.")
+
+# ------------------------------------------------------------------
+# 2. Extraction Function
+# ------------------------------------------------------------------
+def extract_unique_candidates(filename, target_label, exclude_benign=False):
+    path = DATASET_DIR / filename
+    if not path.exists():
+        print(f"Warning: {filename} not found.")
+        return pd.DataFrame()
+
+    print(f"Reading {filename}...")
     df = pd.read_csv(path, low_memory=False)
-    
-    # 1. Strip whitespace from columns
     df.columns = df.columns.str.strip()
     
-    # 2. Normalize Labels
+    # Normalize Labels
     df["Label"] = df["Label"].str.strip().replace(LABEL_MAP)
     
-    # 3. Filter logic
+    # Filter
     if exclude_benign:
-        # Keep only the specific attack label, ignore Benign rows in attack files
         df = df[df["Label"] == target_label]
     else:
-        # For the Benign file, ensure we only take Benign rows
         df = df[df["Label"] == "BENIGN"]
 
-    # 4. Data Cleaning (Remove Inf and NaN)
-    # Replace inf with NaN, then drop any row containing a NaN
-    df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.dropna()
+    # Keep only selected features + Label
+    df = df[SELECTED_FEATURES + ["Label"]]
 
-    # 5. Sampling
-    if len(df) > n_samples:
-        df = df.sample(n=n_samples, random_state=42)
-    else:
-        print(f"   Warning: Only {len(df)} samples available for {target_label}")
-        
+    # Clean
+    df = df.replace([np.inf, -np.inf], np.nan).dropna()
+    
+    # Local deduplication to save memory
+    df = df.drop_duplicates(subset=SELECTED_FEATURES)
+    
     return df
 
 # ------------------------------------------------------------------
-# Main Pipeline
+# 3. Build Global Pool
 # ------------------------------------------------------------------
+all_candidates = []
 
-# 1. Determine Common Columns first (to avoid memory issues later)
-print("Determining common features across all files...")
-common_cols = None
-all_files = [BENIGN_FILE] + ATTACK_FILES
+# Get Benign
+all_candidates.append(extract_unique_candidates(BENIGN_FILE, "BENIGN"))
 
-for f in all_files:
-    path = DATASET_DIR / f
-    if path.exists():
-        cols = set(pd.read_csv(path, nrows=0).columns.str.strip())
-        if common_cols is None:
-            common_cols = cols
-        else:
-            common_cols &= cols
+# Get Attacks
+for f in ATTACK_FILES:
+    label = f.replace(".csv", "")
+    all_candidates.append(extract_unique_candidates(f, label, exclude_benign=True))
 
-common_cols = sorted(list(common_cols))
-print(f"Found {len(common_cols)} common features.")
+print("\nMerging all files for global deduplication...")
+master_pool = pd.concat(all_candidates, ignore_index=True)
 
-# 2. Process and Collect Dataframes
-processed_dfs = []
+# GLOBAL DEDUPLICATION
+# This removes duplicates across different files.
+# If the same feature pattern exists in BENIGN.csv and SYN.csv, 
+# we drop the duplicates to ensure the model doesn't see the same data twice.
+initial_count = len(master_pool)
+master_pool = master_pool.drop_duplicates(subset=SELECTED_FEATURES)
+final_count = len(master_pool)
+
+print(f"Global deduplication complete.")
+print(f"Removed {initial_count - final_count:,} cross-file duplicates.")
+
+# ------------------------------------------------------------------
+# 4. Final Sampling and Validation
+# ------------------------------------------------------------------
+final_subsets = []
+
+print("\nFinal Class Balancing:")
 
 # Process Benign
-path_benign = DATASET_DIR / BENIGN_FILE
-if path_benign.exists():
-    df_b = clean_and_sample(path_benign, "BENIGN", SAMPLES_BENIGN, exclude_benign=False)
-    processed_dfs.append(df_b[common_cols])
+benign_pool = master_pool[master_pool["Label"] == "BENIGN"]
+print(f"BENIGN : Available unique rows: {len(benign_pool):,}")
+if len(benign_pool) < TARGET_BENIGN:
+    print(f"!!! WARNING: Shortfall of {TARGET_BENIGN - len(benign_pool):,} rows for BENIGN")
+final_subsets.append(benign_pool.sample(n=min(len(benign_pool), TARGET_BENIGN), random_state=42))
 
-# Process Attacks
-for f in ATTACK_FILES:
-    path_attack = DATASET_DIR / f
-    if path_attack.exists():
-        # Extract target label from filename (e.g., "SYN" from "SYN.csv")
-        target = f.replace(".csv", "")
-        df_a = clean_and_sample(path_attack, target, SAMPLES_PER_ATTACK, exclude_benign=True)
-        processed_dfs.append(df_a[common_cols])
+# Process each Attack type
+for attack_label in ["SYN", "UDP", "DNS"]:
+    attack_pool = master_pool[master_pool["Label"] == attack_label]
+    print(f"{attack_label:6s} : Available unique rows: {len(attack_pool):,}")
+    
+    if len(attack_pool) < TARGET_ATTACK_PER_TYPE:
+        print(f"!!! WARNING: Shortfall of {TARGET_ATTACK_PER_TYPE - len(attack_pool):,} rows for {attack_label}")
+    
+    final_subsets.append(attack_pool.sample(n=min(len(attack_pool), TARGET_ATTACK_PER_TYPE), random_state=42))
 
-# 3. Merge
-print("\nMerging datasets...")
-master = pd.concat(processed_dfs, ignore_index=True)
+# Combine balanced data
+master = pd.concat(final_subsets, ignore_index=True)
 
-# 4. Binary Encoding
-print("Encoding labels (Benign=0, Attack=1)...")
+# Encoding
 master["Label"] = master["Label"].map(BINARY_ENCODING)
 
-# 5. Final Cleaning Check
-# Ensure no NaNs were introduced during concat and that all data is finite
-master = master.replace([np.inf, -np.inf], np.nan).dropna()
-
-# 6. Shuffle
-print("Shuffling dataset...")
+# Shuffle
 master = master.sample(frac=1, random_state=42).reset_index(drop=True)
 
-# 7. Save Results
-print(f"Saving to {OUTPUT_FILE}...")
+# Save
 master.to_csv(OUTPUT_FILE, index=False)
 
-# Save feature order (excluding Label)
-feature_order = [c for c in master.columns if c != "Label"]
-with open(DATASET_DIR / "feature_order.json", "w") as f:
-    json.dump(feature_order, f, indent=4)
-
 # ------------------------------------------------------------------
-# Summary
+# 5. Summary
 # ------------------------------------------------------------------
-print("\n" + "="*30)
-print("FINAL DATASET SUMMARY")
-print("="*30)
+print("\n" + "="*40)
+print("FINAL MASTER DATASET SUMMARY")
+print("="*40)
 print(master["Label"].value_counts().rename({0: "0 (Benign)", 1: "1 (Attack)"}))
-print(f"Total Shape: {master.shape}")
-print(f"NaN Count:   {master.isna().sum().sum()}")
-print("Done.")
+print(f"Total Rows: {len(master):,}")
+print(f"Total Features: {len(SELECTED_FEATURES)}")
+print(f"Saved to: {OUTPUT_FILE}")
+
+if len(master) < (TARGET_BENIGN + (TARGET_ATTACK_PER_TYPE * 3)):
+    print("\nSTATUS: Dataset created but sampling targets were NOT met due to uniqueness constraints.")
+else:
+    print("\nSTATUS: Success! All sampling targets met with 100% unique rows.")
