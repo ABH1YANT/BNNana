@@ -1,18 +1,19 @@
 [
-    "Min Packet Length",
     "Bwd Packet Length Max",
-    "Total Length of Bwd Packets",
+    "Min Packet Length",
     "Subflow Bwd Bytes",
-    "min_seg_size_forward",
-    "Bwd Header Length",
+    "Total Length of Bwd Packets",
     "Destination Port",
-    "Total Length of Fwd Packets",
-    "Fwd Packet Length Max",
+    "min_seg_size_forward",
     "ACK Flag Count",
-    "Subflow Fwd Bytes",
-    "Total Backward Packets",
     "Subflow Bwd Packets",
+    "Fwd Packet Length Max",
+    "Total Backward Packets",
+    "Subflow Fwd Bytes",
     "Max Packet Length",
+    "Total Length of Fwd Packets",
+    "Bwd Header Length",
     "Flow Duration",
-    "Fwd Header Length"
+    "Fwd Header Length",
+    "act_data_pkt_fwd"
 ]

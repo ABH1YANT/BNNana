@@ -14,7 +14,7 @@ class Config:
     
     # --- Architecture ---
     INPUT_SIZE = 16 # Your 16 behavioral features
-    HIDDEN_LAYERS = [64,32,16,8] # High capacity for 99.99%
+    HIDDEN_LAYERS = [32,16,8] # High capacity for 99.99%
     USE_RESIDUALS = True 
     
     # --- Activation ---
@@ -44,9 +44,9 @@ class Config:
     LOSS_TYPE = "BCEWithLogits"
 
     # --- Output Artifacts ---
-    MODEL_SAVE_PATH = ARTIFACT_DIR / "best_bnn_v2_model.pth"
+    MODEL_SAVE_PATH = ARTIFACT_DIR / "best_bnn_v6_model.pth"
     SCALER_PATH = ARTIFACT_DIR / "scaler_bnn.pkl"
     METRICS_PATH = REPORT_DIR / "metrics.json"
-    REPORT_PATH = REPORT_DIR / "bnn_v2_training_report.md"
+    REPORT_PATH = REPORT_DIR / "bnn_v6_training_report_luts.md"
 
 cfg = Config()

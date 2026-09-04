@@ -1,0 +1,29 @@
+{
+    "architecture": [
+        32,
+        16,
+        8
+    ],
+    "input_size": 16,
+    "teacher": "teacher_for_distillation.pt",
+    "temperature": 4.0,
+    "alpha": 0.7,
+    "best_epoch": 18,
+    "best_validation_f1": 0.9895569567879781,
+    "test_accuracy": 0.9895501741637639,
+    "test_precision": 0.9823316912972085,
+    "test_recall": 0.997033432218926,
+    "test_f1": 0.9896279631437032,
+    "confusion_matrix": [
+        [
+            29462,
+            538
+        ],
+        [
+            89,
+            29912
+        ]
+    ],
+    "preprocessing": "LUT representative + log1p + MinMax",
+    "dataset": "scaled_dataset.csv"
+}
