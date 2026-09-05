@@ -23,7 +23,7 @@ class Config:
         INPUT_SIZE = 16 
 
     # Architecture: 16 -> 32 -> 16 -> (32+16) -> 8 -> (32+16+8) -> 1
-    HIDDEN_LAYERS = [20, 20, 20] 
+    HIDDEN_LAYERS = [64,64,64] 
     
     # In model.py, this now triggers Dense Concatenation after Layer 2
     USE_RESIDUALS = True
@@ -48,7 +48,7 @@ class Config:
     
     # --- Optimizer & Scheduler ---
     OPTIMIZER_TYPE = "AdamW"
-    LEARNING_RATE = 0.0016  # Slightly lower for deep binarized stacks
+    LEARNING_RATE = 0.0008  # Slightly lower for deep binarized stacks
     WEIGHT_DECAY = 0.02     # L2 regularization for latent weights
     SCHEDULER_FACTOR = 0.5
     SCHEDULER_PATIENCE = 5
@@ -58,9 +58,9 @@ class Config:
     LOSS_TYPE = "BCEWithLogits"
 
     # --- Output Artifacts ---
-    MODEL_SAVE_PATH = ARTIFACT_DIR / "best_bnn_v6_model.pth"
+    MODEL_SAVE_PATH = ARTIFACT_DIR / "best_bnn_v7_model.pth"
     SCALER_PATH = ARTIFACT_DIR / "scaler_bnn.pkl"
-    METRICS_PATH = REPORT_DIR / "metrics_v6.json"
-    REPORT_PATH = REPORT_DIR / "bnn_v6_training_report_dense.md"
+    METRICS_PATH = REPORT_DIR / "metrics_v7.json"
+    REPORT_PATH = REPORT_DIR / "bnn_v7_training_report_dense.md"
 
 cfg = Config()
