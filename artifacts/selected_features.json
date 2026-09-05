@@ -14,6 +14,5 @@
     "Total Length of Fwd Packets",
     "Bwd Header Length",
     "Flow Duration",
-    "Fwd Header Length",
-    "act_data_pkt_fwd"
+    "Fwd Header Length"
 ]

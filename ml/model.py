@@ -1,12 +1,3 @@
-"""
-model.py
-Defines the Binarized Neural Network (BNN) architecture.
-Features:
-- Hardware-aware Quantization (Fixed-point simulation)
-- Dense Residual Connections (Concatenation)
-- BinarySign Activation for 1-bit inference
-"""
-
 import torch
 import torch.nn as nn
 from .layers import BinaryLinear
@@ -14,112 +5,106 @@ from .ste import binarize_activation
 from .config import cfg
 
 class BinarySign(nn.Module):
-    """
-    Activation layer that binarizes inputs to -1 or +1.
-    Uses the Straight-Through Estimator (STE) during backpropagation.
-    """
+    """Activation layer that binarizes inputs to -1 or +1."""
     def forward(self, x):
         return binarize_activation(x)
 
 class Quantizer(nn.Module):
-    """
-    Simulates FPGA/MCU fixed-point arithmetic (e.g., Q8.8).
-    Ensures that the model trained on PC matches hardware behavior.
-    """
-    def __init__(self, fractional_bits):
+    """Simulates Q1.8 fixed-point arithmetic for the input stage."""
+    def __init__(self, fractional_bits=8):
         super().__init__()
         self.scale = 2 ** fractional_bits
 
     def forward(self, x):
         if not cfg.SIMULATE_FIXED_POINT:
             return x
-        # Rounding to the nearest fixed-point value
+        x = torch.clamp(x, -1.0, 1.0 - (1.0 / self.scale))
         return torch.round(x * self.scale) / self.scale
 
-class BWNLayer(nn.Module):
-    """
-    A single BNN Layer: Linear -> Quantization -> BatchNormalization -> Activation.
-    BatchNormalization is essential to center data before binarization.
-    """
+class BNNLayer(nn.Module):
+    """Standard BNN Layer: Linear -> BatchNorm -> Activation."""
     def __init__(self, in_features, out_features):
         super().__init__()
-        # BinaryLinear uses binarized weights (-1, +1) in the forward pass
         self.linear = BinaryLinear(in_features, out_features)
-        self.quant = Quantizer(cfg.FRACTIONAL_BITS)
         self.bn = nn.BatchNorm1d(out_features)
         
         if cfg.ACTIVATION_TYPE == "BinarySign":
             self.activation = BinarySign()
         else:
-            # Fallback for standard activations (ReLU, etc.)
             act_class = getattr(nn, cfg.ACTIVATION_TYPE)
             self.activation = act_class(**cfg.ACTIVATION_PARAMS)
 
     def forward(self, x):
-        x = self.linear(x)
-        x = self.quant(x)
-        x = self.bn(x)
-        x = self.activation(x)
-        return x
+        return self.activation(self.bn(self.linear(x)))
 
-class BWNClassifier(nn.Module):
-    """
-    The main BNN Classifier.
-    Implements Dense Residual Logic (Concatenation) to preserve 
-    feature information across 1-bit layers.
-    """
+class BNNClassifier(nn.Module):
     def __init__(self):
-        super(BWNClassifier, self).__init__()
+        super(BNNClassifier, self).__init__()
         
-        self.input_quantizer = Quantizer(cfg.FRACTIONAL_BITS)
+        self.input_quantizer = Quantizer(fractional_bits=8)
         self.use_res = cfg.USE_RESIDUALS
+        h_sizes = cfg.HIDDEN_LAYERS
         
         self.layers = nn.ModuleList()
         
-        # Track the cumulative input size for Dense connections
-        # Starts with the 16 features from Log-Mix preprocessing
-        cumulative_size = cfg.INPUT_SIZE
+        # --- Layer 1: Input (Q1.8) -> Binary ---
+        # This layer always takes the raw features
+        self.layers.append(BNNLayer(cfg.INPUT_SIZE, h_sizes[0]))
         
-        # Build hidden layers based on config [512, 256, 128]
-        for h_size in cfg.HIDDEN_LAYERS:
-            self.layers.append(BWNLayer(cumulative_size, h_size))
+        if len(h_sizes) > 1:
+            # --- Layer 2 and Beyond ---
+            # We track the size of the concatenated binary features
+            # Starting with just the output of Layer 1
+            current_cumulative_size = h_sizes[0]
             
-            if self.use_res:
-                # DENSE MODE: Next layer input grows by the size of this layer
-                cumulative_size += h_size
-            else:
-                # STANDARD MODE: Next layer input = current layer output
-                cumulative_size = h_size
+            for i in range(1, len(h_sizes)):
+                # Each layer takes either the previous layer OR the concatenation of all previous
+                self.layers.append(BNNLayer(current_cumulative_size, h_sizes[i]))
                 
-        # Final Output Layer (Produces Logits)
-        self.output_layer = BinaryLinear(cumulative_size, cfg.OUTPUT_SIZE)
+                if self.use_res:
+                    # If residuals are on, the next layer's input size grows
+                    current_cumulative_size += h_sizes[i]
+                else:
+                    # If residuals are off, the next layer's input is just the previous output
+                    current_cumulative_size = h_sizes[i]
+            
+            self.final_in_size = current_cumulative_size
+        else:
+            self.final_in_size = h_sizes[0]
+
+        # Final Output Layer
+        self.output_layer = BinaryLinear(self.final_in_size, cfg.OUTPUT_SIZE)
 
     def forward(self, x):
-        # 1. Initial Hardware-Aware Quantization
+        # 1. Quantize raw input features to Q1.8
         x = self.input_quantizer(x)
         
-        if self.use_res:
-            # --- DENSE RESIDUAL LOGIC (Concatenation) ---
-            # Stores all previous outputs to prevent information loss
-            features = [x]
-            
-            for layer in self.layers:
-                # Concatenate all previous features along the feature dimension
-                current_input = torch.cat(features, dim=1)
-                out = layer(current_input)
-                features.append(out)
-            
-            # Final layer receives the concatenation of EVERYTHING
-            final_input = torch.cat(features, dim=1)
-            
-        else:
-            # --- STANDARD FEED-FORWARD LOGIC ---
-            out = x
-            for layer in self.layers:
-                out = layer(out)
+        # 2. Layer 1 (Consumes Q1.8, produces first Binary output)
+        out = self.layers[0](x)
+        
+        if len(self.layers) == 1:
+            return self.output_layer(out).squeeze(-1)
+
+        if not self.use_res:
+            # --- STANDARD SEQUENTIAL FLOW ---
+            for i in range(1, len(self.layers)):
+                out = self.layers[i](out)
             final_input = out
-        
-        # 3. Final linear layer to produce classification logits
+        else:
+            # --- DENSE CONCATENATION FLOW ---
+            # binary_history starts with Layer 1 output. 
+            # Raw input 'x' is NOT included here.
+            binary_history = [out]
+            
+            for i in range(1, len(self.layers)):
+                # Concatenate all previous binary outputs
+                dense_input = torch.cat(binary_history, dim=1)
+                out = self.layers[i](dense_input)
+                binary_history.append(out)
+            
+            # Final layer receives the concatenation of all hidden binary outputs
+            final_input = torch.cat(binary_history, dim=1)
+
+        # 3. Final linear layer
         logits = self.output_layer(final_input)
-        
         return logits.squeeze(-1)
