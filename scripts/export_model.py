@@ -1,192 +1,1214 @@
 """
 export_model.py
-Full Export Pipeline: PyTorch -> [Artifacts] & [STM32 Project Folders]
-Targeting: run_33_L3_Arch16-16-16_Adam_LR0.001.pth
+
+Final BNN -> FPGA Exporter
+
+Single source of truth for features:
+    artifacts/selected_features.json
+
+Current model:
+    INPUT_SIZE -> 64 -> 64 -> 32 -> 1
+
+Dense connections:
+    Layer 0: 16  -> 64
+    Layer 1: 64  -> 64
+    Layer 2: 128 -> 32
+    Output : 160 -> 1
+
+Hardware representation:
+
+Layer 0:
+    8-bit input
+        |
+        v
+    signed add/subtract
+        |
+        v
+    threshold
+        |
+        v
+    binary output
+
+Layer 1+:
+    binary input
+        |
+        v
+    XNOR with binary weights
+        |
+        v
+    popcount
+        |
+        v
+    threshold
+        |
+        v
+    binary output
+
+Output:
+    binary input
+        |
+        v
+    XNOR + popcount
+        |
+        v
+    threshold = 81
+        |
+        v
+    classification
 """
 
 import torch
 import torch.nn as nn
-import joblib
+
 import json
-import numpy as np
 import math
-import shutil
+import numpy as np
+
 from pathlib import Path
 from datetime import datetime
+
 import sys
 
-# --- Path Configuration ---
-ROOT = Path(r"C:\Users\a\Desktop\BNNana")
+
+# ============================================================
+# 1. PROJECT PATH
+# ============================================================
+
+ROOT = Path(r"C:\Users\DELL\Desktop\BNNana")
+
 sys.path.insert(0, str(ROOT))
 
-# STM32 Project Paths
-MCU_INC_DIR = ROOT / "mcu" / "BNNana_inference" / "Core" / "Inc"
-MCU_SRC_DIR = ROOT / "mcu" / "BNNana_inference" / "Core" / "Src"
-
 from ml.config import cfg
-from ml.model import BWNClassifier
+from ml.model import BNNClassifier
 from ml.layers import BinaryLinear
 
-# Ensure MCU directories exist
-MCU_INC_DIR.mkdir(parents=True, exist_ok=True)
-MCU_SRC_DIR.mkdir(parents=True, exist_ok=True)
 
-# ------------------------------------------------------------
-# 1. Utility Functions
-# ------------------------------------------------------------
+# ============================================================
+# 2. FPGA OUTPUT DIRECTORY
+# ============================================================
 
-def to_fixed_point(value, fraction_bits=8):
-    ival = int(round(value * (1 << fraction_bits)))
-    return max(-32768, min(32767, ival))
+FPGA_DIR = cfg.ARTIFACT_DIR / "fpga"
 
-def to_fixed_point_hex(value, fraction_bits=8):
-    ival = to_fixed_point(value, fraction_bits)
-    if ival < 0:
-        ival = (1 << 16) + ival
-    return f"{ival & 0xFFFF:04x}"
+FPGA_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
 
-def clean_feature_name(name):
-    return (name.upper().replace(" ", "_").replace("-", "_")
-            .replace("/", "_").replace(".", "_").replace("(", "")
-            .replace(")", "").strip("_"))
 
-def pack_weights_to_hex(tensor):
-    weights = torch.sign(tensor).cpu().detach().numpy()
-    hex_rows = []
-    bit_width = weights.shape[1]
-    hex_width = math.ceil(bit_width / 4)
-    for row in weights:
-        bits = "".join(['1' if x > 0 else '0' for x in row])
-        hex_val = hex(int(bits, 2))[2:].zfill(hex_width)
-        hex_rows.append(hex_val)
-    return hex_rows
+# ============================================================
+# 3. BASIC HELPERS
+# ============================================================
 
-# ------------------------------------------------------------
-# 2. Parameter Extraction (Bias Fusion)
-# ------------------------------------------------------------
+def get_binary_weights(linear):
+    """
+    Convert BinaryLinear latent weights into the exact binary
+    representation used by the model.
 
-def extract_parameters(model):
-    layers_data = []
-    current_linear = None
-    for module in model.hidden_stack:
-        if isinstance(module, BinaryLinear):
-            current_linear = module
-        elif isinstance(module, nn.BatchNorm1d):
-            mu = module.running_mean.detach().numpy()
-            var = module.running_var.detach().numpy()
-            gamma = module.weight.detach().numpy()
-            beta = module.bias.detach().numpy()
-            eps = module.eps
-            lin_bias = current_linear.bias.detach().numpy() if current_linear.bias is not None else 0
-            
-            A = gamma / np.sqrt(var + eps)
-            B = A * (lin_bias - mu) + beta
-            
-            layers_data.append({"type": "hidden", "weights": current_linear.weight.detach(), "A": A, "B": B})
-            current_linear = None
+    PyTorch:
+        weight >= 0 -> +1
+        weight <  0 -> -1
 
-    o_w = model.output_layer.weight.detach()
-    o_b = model.output_layer.bias.detach().numpy()[0] if model.output_layer.bias is not None else 0.0
-    layers_data.append({"type": "output", "weights": o_w, "bias": o_b})
-    return layers_data
+    FPGA:
+        +1 -> 1
+        -1 -> 0
+    """
 
-# ------------------------------------------------------------
-# 3. Main Export Logic
-# ------------------------------------------------------------
+    if not isinstance(linear, BinaryLinear):
+        raise TypeError(
+            f"Expected BinaryLinear, got {type(linear)}"
+        )
+
+    latent = (
+        linear.weight
+        .detach()
+        .cpu()
+        .numpy()
+    )
+
+    pm1 = np.where(
+        latent >= 0,
+        1,
+        -1
+    ).astype(np.int8)
+
+    bits = np.where(
+        pm1 > 0,
+        1,
+        0
+    ).astype(np.uint8)
+
+    return pm1, bits
+
+
+def pack_weight_rows_to_hex(weight_bits):
+    """
+    Convert each neuron's binary weight vector into one hex word.
+
+    Example:
+
+        101100
+
+    becomes:
+
+        2c
+
+    One line = one neuron.
+    """
+
+    weight_bits = np.asarray(weight_bits)
+
+    if weight_bits.ndim != 2:
+        raise ValueError(
+            "Weight matrix must be 2-dimensional."
+        )
+
+    input_count = weight_bits.shape[1]
+
+    hex_width = math.ceil(
+        input_count / 4
+    )
+
+    result = []
+
+    for row in weight_bits:
+
+        bit_string = "".join(
+            "1" if int(bit) else "0"
+            for bit in row
+        )
+
+        value = int(
+            bit_string,
+            2
+        )
+
+        result.append(
+            format(
+                value,
+                f"0{hex_width}x"
+            )
+        )
+
+    return result
+
+
+def write_weight_mem(path, weight_bits):
+    """
+    Write one packed hexadecimal weight word per neuron.
+    """
+
+    rows = pack_weight_rows_to_hex(
+        weight_bits
+    )
+
+    with open(path, "w") as f:
+
+        for row in rows:
+            f.write(row + "\n")
+
+
+def signed16_hex(value):
+    """
+    Convert signed integer to 16-bit two's complement hex.
+    """
+
+    value = int(value)
+
+    if value < -32768 or value > 32767:
+        raise ValueError(
+            f"Value {value} does not fit in signed 16-bit."
+        )
+
+    if value < 0:
+        value += 65536
+
+    return f"{value:04x}"
+
+
+def write_threshold_mem(path, thresholds):
+    """
+    Write signed 16-bit thresholds as hexadecimal.
+    """
+
+    with open(path, "w") as f:
+
+        for threshold in thresholds:
+
+            f.write(
+                signed16_hex(threshold)
+                + "\n"
+            )
+
+
+# ============================================================
+# 4. BATCHNORM -> HARDWARE THRESHOLD
+# ============================================================
+
+def fuse_batchnorm(linear, bn):
+    """
+    Convert:
+
+        BinaryLinear -> BatchNorm -> BinarySign
+
+    into:
+
+        effective binary weights
+        +
+        integer threshold
+
+    For:
+
+        z = sum(w*x)
+
+        BN(z) = gamma * (z-mu)/sqrt(var+eps) + beta
+
+    Define:
+
+        A = gamma/sqrt(var+eps)
+
+        B = beta - A*mu
+
+    We need:
+
+        A*z + B >= 0
+
+    If A > 0:
+
+        z >= -B/A
+
+    If A < 0:
+
+        -z >= -B/|A|
+
+    Therefore when A < 0, all weights are flipped.
+
+    Returns effective weights and floating-point threshold
+    in the SAME accumulator domain as z.
+    """
+
+    original_pm1, _ = get_binary_weights(
+        linear
+    )
+
+    gamma = (
+        bn.weight
+        .detach()
+        .cpu()
+        .numpy()
+    )
+
+    beta = (
+        bn.bias
+        .detach()
+        .cpu()
+        .numpy()
+    )
+
+    mean = (
+        bn.running_mean
+        .detach()
+        .cpu()
+        .numpy()
+    )
+
+    var = (
+        bn.running_var
+        .detach()
+        .cpu()
+        .numpy()
+    )
+
+    eps = bn.eps
+
+    effective_pm1 = original_pm1.copy()
+
+    thresholds = []
+
+    for neuron in range(
+        linear.out_features
+    ):
+
+        A = (
+            gamma[neuron]
+            /
+            np.sqrt(
+                var[neuron] + eps
+            )
+        )
+
+        B = (
+            beta[neuron]
+            -
+            A * mean[neuron]
+        )
+
+        # Extremely unlikely for normal BatchNorm,
+        # but handle safely.
+        if abs(A) < 1e-12:
+
+            if B >= 0:
+
+                # Always +1.
+                threshold = -1e9
+
+            else:
+
+                # Always -1.
+                threshold = 1e9
+
+        else:
+
+            if A < 0:
+
+                # Flip the entire weight vector.
+                effective_pm1[
+                    neuron, :
+                ] *= -1
+
+            threshold = (
+                -B / abs(A)
+            )
+
+        thresholds.append(
+            float(threshold)
+        )
+
+    effective_bits = np.where(
+        effective_pm1 > 0,
+        1,
+        0
+    ).astype(np.uint8)
+
+    return (
+        effective_pm1,
+        effective_bits,
+        np.array(
+            thresholds,
+            dtype=np.float64
+        )
+    )
+
+
+# ============================================================
+# 5. HIDDEN BINARY THRESHOLD
+# ============================================================
+
+def signed_threshold_to_popcount(
+    signed_threshold,
+    input_count
+):
+    """
+    Binary XNOR/popcount relation:
+
+        signed_sum = 2*popcount - N
+
+    We need:
+
+        signed_sum >= T
+
+    therefore:
+
+        popcount >= (T + N)/2
+
+    Return the smallest integer popcount satisfying it.
+    """
+
+    threshold = math.ceil(
+        (
+            signed_threshold
+            +
+            input_count
+        ) / 2
+    )
+
+    return max(
+        0,
+        min(
+            input_count,
+            threshold
+        )
+    )
+
+
+# ============================================================
+# 6. LOAD FEATURES
+# ============================================================
+
+def load_features():
+    """
+    selected_features.json is the SINGLE source of truth.
+
+    Do not hardcode feature names anywhere in this exporter.
+    """
+
+    feature_file = (
+        cfg.ARTIFACT_DIR
+        /
+        "selected_features.json"
+    )
+
+    if not feature_file.exists():
+
+        raise FileNotFoundError(
+            f"Feature file not found:\n"
+            f"{feature_file}"
+        )
+
+    with open(
+        feature_file,
+        "r"
+    ) as f:
+
+        features = json.load(f)
+
+    if not isinstance(features, list):
+
+        raise ValueError(
+            "selected_features.json must contain a JSON list."
+        )
+
+    if len(features) != cfg.INPUT_SIZE:
+
+        raise ValueError(
+            "Feature count mismatch.\n"
+            f"selected_features.json: {len(features)}\n"
+            f"cfg.INPUT_SIZE: {cfg.INPUT_SIZE}"
+        )
+
+    return features
+
+
+# ============================================================
+# 7. MAIN
+# ============================================================
 
 def main():
-    TARGET_MODEL_PATH = ROOT / "models" / "all_runs" / "run_33_L3_Arch16-16-16_Adam_LR0.001.pth"
-    
-    if not TARGET_MODEL_PATH.exists():
-        print(f"Error: {TARGET_MODEL_PATH} not found.")
-        return
 
-    print(f"Exporting: {TARGET_MODEL_PATH.name}")
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    model = BWNClassifier()
-    model.load_state_dict(torch.load(TARGET_MODEL_PATH, map_location='cpu'))
+    timestamp = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    print("=" * 70)
+    print("BNN FPGA EXPORT")
+    print("=" * 70)
+
+    # --------------------------------------------------------
+    # Load feature definition
+    # --------------------------------------------------------
+
+    features = load_features()
+
+    print()
+    print("Features loaded from:")
+    print(
+        cfg.ARTIFACT_DIR
+        /
+        "selected_features.json"
+    )
+
+    print()
+    print("Feature order:")
+
+    for i, feature in enumerate(features):
+
+        print(
+            f"  [{i:02d}] {feature}"
+        )
+
+    # --------------------------------------------------------
+    # Model
+    # --------------------------------------------------------
+
+    model_path = cfg.MODEL_SAVE_PATH
+
+    print()
+    print(
+        f"Loading model:\n{model_path}"
+    )
+
+    if not model_path.exists():
+
+        raise FileNotFoundError(
+            f"Model not found:\n{model_path}\n\n"
+            "Run train.py first."
+        )
+
+    model = BNNClassifier()
+
+    state_dict = torch.load(
+        model_path,
+        map_location="cpu"
+    )
+
+    model.load_state_dict(
+        state_dict
+    )
+
     model.eval()
 
-    scaler = joblib.load(cfg.SCALER_PATH)
-    params = extract_parameters(model)
+    # --------------------------------------------------------
+    # Architecture verification
+    # --------------------------------------------------------
 
-    # --- 1. GENERATE bnn_types.h ---
-    with open(cfg.ARTIFACT_DIR / "selected_features.json", "r") as fj:
-        features = json.load(fj)
-    
-    content_types = f"// Generated: {timestamp}\n#ifndef BNN_TYPES_H\n#define BNN_TYPES_H\n\n#include <stdint.h>\n\ntypedef struct {{\n"
-    for feat in features:
-        clean_name = feat.lower().replace(" ", "_").replace("-", "_").replace("/", "_").replace(".", "_")
-        content_types += f"    float {clean_name};\n"
-    content_types += f"}} FlowFeatures;\n\ntypedef union {{\n    FlowFeatures named;\n    float array[{len(features)}];\n}} BNN_Input;\n\n#endif"
-    
-    with open(cfg.ARTIFACT_DIR / "bnn_types.h", "w") as f: f.write(content_types)
-    with open(MCU_INC_DIR / "bnn_types.h", "w") as f: f.write(content_types)
+    print()
+    print("Architecture verification:")
+    print(
+        f"  Input: {cfg.INPUT_SIZE}"
+    )
+    print(
+        f"  Hidden: {cfg.HIDDEN_LAYERS}"
+    )
+    print(
+        f"  Dense: {cfg.USE_RESIDUALS}"
+    )
+    print(
+        f"  Output: {cfg.OUTPUT_SIZE}"
+    )
 
-    # --- 2. GENERATE weights.h / weights.c ---
-    # Header
-    content_wh = f"// Generated from: {TARGET_MODEL_PATH.name}\n#ifndef BNN_WEIGHTS_H\n#define BNN_WEIGHTS_H\n#include <stdint.h>\n\n"
-    content_wh += f"#define NUM_HIDDEN_LAYERS {len(cfg.HIDDEN_LAYERS)}\n#define INPUT_SIZE {cfg.INPUT_SIZE}\n"
-    for i, h_size in enumerate(cfg.HIDDEN_LAYERS):
-        content_wh += f"#define L{i}_SIZE {h_size}\n"
-    content_wh += "\n"
-    for i, h_size in enumerate(cfg.HIDDEN_LAYERS):
-        in_s = cfg.INPUT_SIZE if i == 0 else cfg.HIDDEN_LAYERS[i-1]
-        content_wh += f"extern const int8_t L{i}_WEIGHTS[{h_size}][{in_s}];\nextern const int16_t L{i}_A[{h_size}];\nextern const int16_t L{i}_B[{h_size}];\n\n"
-    content_wh += f"extern const int8_t OUT_WEIGHTS[1][{cfg.HIDDEN_LAYERS[-1]}];\nextern const int16_t OUT_BIAS;\n#endif"
-    
-    with open(cfg.ARTIFACT_DIR / "weights.h", "w") as f: f.write(content_wh)
-    with open(MCU_INC_DIR / "weights.h", "w") as f: f.write(content_wh)
+    expected_hidden = [64, 64, 32]
 
-    # Source
-    content_wc = f'#include "weights.h"\n\n'
-    for i, layer in enumerate(params[:-1]):
-        w_bin = torch.sign(layer['weights']).numpy().astype(int)
-        h_size, in_s = w_bin.shape
-        rows = [ "{" + ", ".join(map(str, row)) + "}" for row in w_bin ]
-        content_wc += f"const int8_t L{i}_WEIGHTS[{h_size}][{in_s}] = {{\n    " + ",\n    ".join(rows) + "\n};\n"
-        content_wc += f"const int16_t L{i}_A[{h_size}] = {{ {', '.join([str(to_fixed_point(x)) for x in layer['A']])} }};\n"
-        content_wc += f"const int16_t L{i}_B[{h_size}] = {{ {', '.join([str(to_fixed_point(x)) for x in layer['B']])} }};\n\n"
-    
-    o_w_bin = torch.sign(params[-1]['weights']).numpy().astype(int)
-    content_wc += f"const int8_t OUT_WEIGHTS[1][{o_w_bin.shape[1]}] = {{ {{ {', '.join(map(str, o_w_bin.flatten()))} }} }};\n"
-    content_wc += f"const int16_t OUT_BIAS = {to_fixed_point(params[-1]['bias'])};\n"
-    
-    with open(cfg.ARTIFACT_DIR / "weights.c", "w") as f: f.write(content_wc)
-    with open(MCU_SRC_DIR / "weights.c", "w") as f: f.write(content_wc)
+    if cfg.HIDDEN_LAYERS != expected_hidden:
 
-    # --- 3. GENERATE scaler.h / scaler.c ---
-    content_sh = f"#ifndef SCALER_H\n#define SCALER_H\n#define BNN_INPUTS {cfg.INPUT_SIZE}\nextern const float SCALER_OFFSET[BNN_INPUTS];\nextern const float SCALER_SCALE[BNN_INPUTS];\n#endif"
-    with open(cfg.ARTIFACT_DIR / "scaler.h", "w") as f: f.write(content_sh)
-    with open(MCU_INC_DIR / "scaler.h", "w") as f: f.write(content_sh)
+        raise ValueError(
+            "Expected HIDDEN_LAYERS = [64, 64, 32].\n"
+            f"Found: {cfg.HIDDEN_LAYERS}"
+        )
 
-    content_sc = f'#include "scaler.h"\nconst float SCALER_OFFSET[{cfg.INPUT_SIZE}] = {{ {", ".join(map(str, scaler.min_))} }};\n'
-    content_sc += f'const float SCALER_SCALE[{cfg.INPUT_SIZE}] = {{ {", ".join(map(str, scaler.scale_))} }};\n'
-    with open(cfg.ARTIFACT_DIR / "scaler.c", "w") as f: f.write(content_sc)
-    with open(MCU_SRC_DIR / "scaler.c", "w") as f: f.write(content_sc)
+    if cfg.INPUT_SIZE != len(features):
 
-    # --- 4. GENERATE feature_order.h ---
-    content_fo = "#ifndef FEATURE_ORDER_H\n#define FEATURE_ORDER_H\ntypedef enum {\n"
-    for feat in features: content_fo += f"    FEAT_{clean_feature_name(feat)},\n"
-    content_fo += f"    NUM_FEATURES = {len(features)}\n}} FeatureIndex;\n#endif"
-    with open(cfg.ARTIFACT_DIR / "feature_order.h", "w") as f: f.write(content_fo)
-    with open(MCU_INC_DIR / "feature_order.h", "w") as f: f.write(content_fo)
+        raise ValueError(
+            "Input size and feature count disagree."
+        )
 
-    # --- 5. FPGA EXPORT (.mem) ---
-    for i, layer in enumerate(params):
-        prefix = f"layer{i}" if layer['type'] == "hidden" else "output"
-        with open(cfg.ARTIFACT_DIR / f"{prefix}_weights.mem", "w") as f:
-            f.write("\n".join(pack_weights_to_hex(layer['weights'])))
-        if layer['type'] == "hidden":
-            with open(cfg.ARTIFACT_DIR / f"{prefix}_affine.mem", "w") as f:
-                for a, b in zip(layer['A'], layer['B']):
-                    f.write(f"{to_fixed_point_hex(a)}{to_fixed_point_hex(b)}\n")
+    if not cfg.USE_RESIDUALS:
+
+        raise ValueError(
+            "This exporter expects dense concatenation "
+            "(USE_RESIDUALS=True)."
+        )
+
+    # --------------------------------------------------------
+    # Expected dimensions
+    # --------------------------------------------------------
+
+    expected_dims = [
+        (16, 64),
+        (64, 64),
+        (128, 32),
+        (160, 1)
+    ]
+
+    actual_dims = []
+
+    for layer in model.layers:
+
+        actual_dims.append(
+            (
+                layer.linear.in_features,
+                layer.linear.out_features
+            )
+        )
+
+    actual_dims.append(
+        (
+            model.output_layer.in_features,
+            model.output_layer.out_features
+        )
+    )
+
+    print()
+    print("Layer dimensions:")
+
+    for i, dims in enumerate(actual_dims):
+
+        print(
+            f"  Layer {i}: "
+            f"{dims[0]} -> {dims[1]}"
+        )
+
+        if dims != expected_dims[i]:
+
+            raise ValueError(
+                f"Layer {i} dimension mismatch.\n"
+                f"Expected: {expected_dims[i]}\n"
+                f"Found:    {dims}"
+            )
+
+    # ========================================================
+    # HIDDEN LAYERS
+    # ========================================================
+
+    total_weights = 0
+
+    for layer_index, layer in enumerate(
+        model.layers
+    ):
+
+        linear = layer.linear
+        bn = layer.bn
+
+        print()
+        print(
+            f"--- Hidden Layer {layer_index} ---"
+        )
+
+        print(
+            f"Input : {linear.in_features}"
+        )
+
+        print(
+            f"Output: {linear.out_features}"
+        )
+
+        # ----------------------------------------------------
+        # Fuse BN
+        # ----------------------------------------------------
+
+        (
+            effective_pm1,
+            effective_bits,
+            floating_thresholds
+        ) = fuse_batchnorm(
+            linear,
+            bn
+        )
+
+        # ----------------------------------------------------
+        # Weight file
+        # ----------------------------------------------------
+
+        weight_file = (
+            FPGA_DIR
+            /
+            f"layer{layer_index}_weights.mem"
+        )
+
+        write_weight_mem(
+            weight_file,
+            effective_bits
+        )
+
+        # ----------------------------------------------------
+        # Threshold
+        # ----------------------------------------------------
+
+        if layer_index == 0:
+
+            # ------------------------------------------------
+            # IMPORTANT:
+            #
+            # Layer 0 receives an 8-bit integer.
+            #
+            # PyTorch input:
+            #
+            #     x_q = integer / 256
+            #
+            # FPGA input:
+            #
+            #     integer
+            #
+            # Therefore multiply threshold by 256.
+            # ------------------------------------------------
+
+            raw_thresholds = []
+
+            for t in floating_thresholds:
+
+                if abs(t) > 1e8:
+
+                    raw_thresholds.append(
+                        int(
+                            -32768
+                            if t < 0
+                            else 32767
+                        )
+                    )
+
+                else:
+
+                    raw_t = math.ceil(
+                        t
+                        *
+                        (
+                            2
+                            **
+                            cfg.FRACTIONAL_BITS
+                        )
+                    )
+
+                    raw_thresholds.append(
+                        raw_t
+                    )
+
+            threshold_file = (
+                FPGA_DIR
+                /
+                "layer0_thresholds.mem"
+            )
+
+            write_threshold_mem(
+                threshold_file,
+                raw_thresholds
+            )
+
+            print(
+                "Accumulator: 8-bit signed add/subtract"
+            )
+
+            print(
+                "Threshold domain: raw Q1.8 integer"
+            )
+
         else:
-            with open(cfg.ARTIFACT_DIR / "output_bias.mem", "w") as f:
-                f.write(to_fixed_point_hex(layer['bias']) + "\n")
 
-    print(f"Success! Artifacts deployed to:\n - {cfg.ARTIFACT_DIR}\n - {MCU_INC_DIR}\n - {MCU_SRC_DIR}")
+            # ------------------------------------------------
+            # Layer 1+:
+            #
+            # Binary inputs
+            # Binary weights
+            #
+            # signed_sum = 2*popcount - N
+            # ------------------------------------------------
+
+            popcount_thresholds = []
+
+            for t in floating_thresholds:
+
+                if abs(t) > 1e8:
+
+                    if t < 0:
+
+                        pc_threshold = 0
+
+                    else:
+
+                        pc_threshold = (
+                            linear.in_features + 1
+                        )
+
+                else:
+
+                    signed_t = math.ceil(t)
+
+                    pc_threshold = (
+                        signed_threshold_to_popcount(
+                            signed_t,
+                            linear.in_features
+                        )
+                    )
+
+                popcount_thresholds.append(
+                    pc_threshold
+                )
+
+            threshold_file = (
+                FPGA_DIR
+                /
+                f"layer{layer_index}_thresholds.mem"
+            )
+
+            write_threshold_mem(
+                threshold_file,
+                popcount_thresholds
+            )
+
+            print(
+                "Accumulator: XNOR + popcount"
+            )
+
+            print(
+                "Threshold domain: popcount"
+            )
+
+        layer_weights = (
+            linear.in_features
+            *
+            linear.out_features
+        )
+
+        total_weights += layer_weights
+
+        print(
+            f"Weights: {layer_weights}"
+        )
+
+        print(
+            f"Generated: {weight_file.name}"
+        )
+
+        print(
+            f"Generated: {threshold_file.name}"
+        )
+
+    # ========================================================
+    # OUTPUT LAYER
+    # ========================================================
+
+    print()
+    print("--- Output Layer ---")
+
+    output_linear = model.output_layer
+
+    (
+        output_pm1,
+        output_bits
+    ) = get_binary_weights(
+        output_linear
+    )
+
+    output_weight_file = (
+        FPGA_DIR
+        /
+        "output_weights.mem"
+    )
+
+    write_weight_mem(
+        output_weight_file,
+        output_bits
+    )
+
+    output_inputs = (
+        output_linear.in_features
+    )
+
+    # No BatchNorm.
+    #
+    # Training classification:
+    #
+    # sigmoid(logit) > 0.5
+    #
+    # equivalent to:
+    #
+    # logit > 0
+    #
+    # For binary dot product:
+    #
+    # logit = 2*popcount - N
+    #
+    # Need:
+    #
+    # 2*popcount - N > 0
+    #
+    # For N = 160:
+    #
+    # popcount > 80
+    #
+    # Therefore:
+    #
+    # popcount >= 81
+
+    output_threshold = (
+        output_inputs // 2
+    ) + 1
+
+    output_threshold_file = (
+        FPGA_DIR
+        /
+        "output_threshold.mem"
+    )
+
+    write_threshold_mem(
+        output_threshold_file,
+        [output_threshold]
+    )
+
+    output_weight_count = (
+        output_linear.in_features
+        *
+        output_linear.out_features
+    )
+
+    total_weights += output_weight_count
+
+    print(
+        f"Input: {output_inputs}"
+    )
+
+    print(
+        f"Weights: {output_weight_count}"
+    )
+
+    print(
+        f"Output threshold: {output_threshold}"
+    )
+
+    print(
+        f"Generated: {output_weight_file.name}"
+    )
+
+    print(
+        f"Generated: {output_threshold_file.name}"
+    )
+
+    # ========================================================
+    # FEATURE ORDER
+    # ========================================================
+
+    feature_output = (
+        FPGA_DIR
+        /
+        "feature_order.json"
+    )
+
+    with open(
+        feature_output,
+        "w"
+    ) as f:
+
+        json.dump(
+            features,
+            f,
+            indent=2
+        )
+
+    # ========================================================
+    # QUANTIZATION METADATA
+    # ========================================================
+
+    quantization = {
+
+        "input_features": len(features),
+
+        "training_input": "Q1.8",
+
+        "fractional_bits":
+            cfg.FRACTIONAL_BITS,
+
+        "scale":
+            2 ** cfg.FRACTIONAL_BITS,
+
+        "fpga_input": "uint8",
+
+        "fpga_range": [
+            0,
+            255
+        ],
+
+        "conversion":
+            "q1_8_value = uint8_value / 256.0",
+
+        "layer0_accumulator":
+            "signed sum of ± uint8 values"
+    }
+
+    with open(
+        FPGA_DIR
+        /
+        "quantization.json",
+        "w"
+    ) as f:
+
+        json.dump(
+            quantization,
+            f,
+            indent=2
+        )
+
+    # ========================================================
+    # MODEL METADATA
+    # ========================================================
+
+    model_info = {
+
+        "generated":
+            timestamp,
+
+        "model":
+            model_path.name,
+
+        "input_size":
+            cfg.INPUT_SIZE,
+
+        "features":
+            features,
+
+        "hidden_layers":
+            cfg.HIDDEN_LAYERS,
+
+        "dense_connections":
+            bool(cfg.USE_RESIDUALS),
+
+        "output_size":
+            cfg.OUTPUT_SIZE,
+
+        "dimensions": [
+
+            {
+                "layer": 0,
+                "input": 16,
+                "output": 64
+            },
+
+            {
+                "layer": 1,
+                "input": 64,
+                "output": 64
+            },
+
+            {
+                "layer": 2,
+                "input": 128,
+                "output": 32
+            },
+
+            {
+                "layer": "output",
+                "input": 160,
+                "output": 1
+            }
+        ],
+
+        "weight_encoding": {
+
+            "0":
+                "-1",
+
+            "1":
+                "+1"
+        },
+
+        "weight_count": {
+
+            "layer0":
+                16 * 64,
+
+            "layer1":
+                64 * 64,
+
+            "layer2":
+                128 * 32,
+
+            "output":
+                160,
+
+            "total":
+                total_weights
+        },
+
+        "total_binary_weights":
+            total_weights,
+
+        "activation":
+            "BinarySign",
+
+        "batchnorm":
+            "fused into thresholds",
+
+        "hardware": {
+
+            "layer0":
+                "signed add/subtract + comparator",
+
+            "layer1":
+                "XNOR + popcount + comparator",
+
+            "layer2":
+                "XNOR + popcount + comparator",
+
+            "output":
+                "XNOR + popcount + comparator"
+        }
+    }
+
+    with open(
+        FPGA_DIR
+        /
+        "model_info.json",
+        "w"
+    ) as f:
+
+        json.dump(
+            model_info,
+            f,
+            indent=2
+        )
+
+    # ========================================================
+    # FINAL SUMMARY
+    # ========================================================
+
+    print()
+    print("=" * 70)
+    print("EXPORT SUCCESSFUL")
+    print("=" * 70)
+
+    print(
+        f"FPGA artifacts:\n{FPGA_DIR}"
+    )
+
+    print()
+    print(
+        "Architecture:"
+    )
+
+    print(
+        "16 -> 64 -> 64 -> 32 -> 1"
+    )
+
+    print(
+        "Dense concatenation: ON"
+    )
+
+    print()
+    print(
+        "Weights:"
+    )
+
+    print(
+        "Layer 0 : 1,024"
+    )
+
+    print(
+        "Layer 1 : 4,096"
+    )
+
+    print(
+        "Layer 2 : 4,096"
+    )
+
+    print(
+        "Output  :   160"
+    )
+
+    print(
+        f"TOTAL   : {total_weights:,}"
+    )
+
+    print()
+    print(
+        "Generated files:"
+    )
+
+    for file in sorted(
+        FPGA_DIR.iterdir()
+    ):
+
+        if file.is_file():
+
+            print(
+                f"  {file.name}"
+            )
+
+    print()
+    print(
+        "IMPORTANT:"
+    )
+
+    print(
+        "These artifacts were generated from the "
+        "current trained .pth."
+    )
+
+    print(
+        "Do not manually edit the .mem files."
+    )
+
+    print("=" * 70)
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
     main()

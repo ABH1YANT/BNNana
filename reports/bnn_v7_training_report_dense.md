@@ -203,3 +203,32 @@ Tracking performance of Dense-Residual BNNs with Q1.8 Input Quantization.
 | **Actual Attack** | 281 | 29720 |
 
 ---
+
+## Evaluation Run: 2026-09-13 12:02:19
+**Model File:** `best_bnn_v7_model.pth`
+
+### 1. System Configuration
+| Parameter | Value |
+| :--- | :--- |
+| **Architecture** | 64 -> 64 -> 32 |
+| **Residual Logic** | Dense Concatenation (Binary Only) |
+| **Input Propagation** | Excluded from Residuals (Consumed by L1) |
+| **Hardware Sim** | Enabled (Q1.8 Fixed-Point) |
+| **Input Features** | 16 |
+| **Activation** | BinarySign |
+
+### 2. Performance Metrics
+| Metric | Score |
+| :--- | :--- |
+| **Accuracy** | 0.987567 |
+| **Precision** | 0.977882 |
+| **Recall** | 0.997700 |
+| **F1-Score** | 0.987692 |
+
+### 3. Confusion Matrix
+| | Predicted Benign | Predicted Attack |
+| :--- | :---: | :---: |
+| **Actual Benign** | 29323 | 677 |
+| **Actual Attack** | 69 | 29932 |
+
+---

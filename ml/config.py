@@ -23,7 +23,7 @@ class Config:
         INPUT_SIZE = 16 
 
     # Architecture: 16 -> 32 -> 16 -> (32+16) -> 8 -> (32+16+8) -> 1
-    HIDDEN_LAYERS = [64,64,64] 
+    HIDDEN_LAYERS = [64,64,32] 
     
     # In model.py, this now triggers Dense Concatenation after Layer 2
     USE_RESIDUALS = True
