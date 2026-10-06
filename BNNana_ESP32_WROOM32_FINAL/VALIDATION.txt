@@ -1,0 +1,44 @@
+BNNana ESP32-WROOM-32 inference validation
+
+Model source:
+best_bnn_v7_model.pth
+
+Export contract:
+16 -> 64 -> 64 -> 32 -> 1
+Dense connections: L2=[L0,L1], output=[L0,L1,L2]
+Binary weights: 9376 total
+
+Checks performed:
+1. Recomputed every exported hidden-layer binary weight row from best_bnn_v7_model.pth.
+   Result: layer0 PASS, layer1 PASS, layer2 PASS.
+2. Recomputed every exported hidden-layer threshold using export_model.py logic.
+   Result: layer0 PASS, layer1 PASS, layer2 PASS.
+3. Recomputed output binary weights.
+   Result: PASS.
+4. Output threshold checked: 81.
+5. C++ inference implementation compared against a Python reference built directly
+   from the exported .mem files on 100 deterministic random Q1.8 input vectors.
+   Result: PASS (100/100).
+6. Exported threshold network compared against the PyTorch model on the same 100
+   Q1.8 inputs.
+   Result: PASS (100/100).
+
+Important:
+The first draft of this ESP32 code had a packed-weight bit indexing issue for
+32/64/128/160-bit rows. That issue is fixed in this version. Do not use the
+older BNNana_ESP32_WROOM32.zip; use the v2 archive.
+
+Preprocessing status:
+The inference engine expects 16 uint8 Q1.8 values. The uploaded export metadata
+specifies q1_8_value = uint8_value / 256.0 and range 0..255.
+The raw network-flow -> 16 preprocessed features -> Q1.8 conversion is NOT
+implemented here because the actual LUT CSV contents used during dataset
+preprocessing were not part of the uploaded current export.
+
+
+PREPROCESSING
+==============
+16 supplied feature LUT CSVs were incorporated.
+LUT normalized_value was quantized as round(value*256), clipped to 0..255.
+Upper-bit addressing follows lut_metadata.json discarded_lower_bits.
+ACK Flag Count uses exact-value addressing.

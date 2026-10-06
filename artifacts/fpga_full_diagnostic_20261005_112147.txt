@@ -1,0 +1,403 @@
+FPGA FULL PC-SIDE DIAGNOSTIC LOG
+==============================================================================
+Dataset: C:\Users\DELL\Desktop\BNNana\datasets\processed\test_fpga.csv
+UART: COM13 @ 115200
+Samples: 10
+Current UART protocol returns only the final FPGA 0/1 result. This log therefore records every PC-visible stage: all 24 CSV features, the 16 FPGA features, exact 45-byte packet, FPGA response, status, and timing. Internal FPGA layer signals are not available unless a separate debug bitstream exposes them.
+==============================================================================
+
+==============================================================================
+SAMPLE 0
+==============================================================================
+
+----- DATASET / GROUND TRUTH -----
+Expected label : 0
+Dataset index  : 0
+
+----- ALL 24 DATASET FEATURES -----
+Max Packet Length               : 6
+Min Packet Length               : 6
+Fwd Packet Length Max           : 6
+Bwd Packet Length Max           : 6
+Total Length of Fwd Packets     : 6
+Total Length of Bwd Packets     : 6
+Subflow Fwd Bytes               : 6
+Subflow Bwd Bytes               : 6
+Fwd Header Length               : 20
+Bwd Header Length               : 20
+Destination Port                : 53521
+Total Fwd Packets               : 1
+Total Backward Packets          : 1
+Subflow Fwd Packets             : 1
+Subflow Bwd Packets             : 1
+act_data_pkt_fwd                : 0
+Flow Duration                   : 0
+min_seg_size_forward            : 20
+ACK Flag Count                  : 1
+SYN Flag Count                  : 0
+RST Flag Count                  : 0
+FIN Flag Count                  : 0
+PSH Flag Count                  : 0
+URG Flag Count                  : 1
+
+----- 16 FPGA FEATURES SENT -----
+Bwd Packet Length Max           : value=6            width=14 bytes=2 encoded=06 00
+Min Packet Length               : value=6            width=11 bytes=2 encoded=06 00
+Subflow Bwd Bytes               : value=6            width=25 bytes=4 encoded=06 00 00 00
+Total Length of Bwd Packets     : value=6            width=25 bytes=4 encoded=06 00 00 00
+Destination Port                : value=53521        width=16 bytes=2 encoded=11 D1
+min_seg_size_forward            : value=20           width=11 bytes=2 encoded=14 00
+ACK Flag Count                  : value=1            width=1  bytes=1 encoded=01
+Subflow Bwd Packets             : value=1            width=17 bytes=3 encoded=01 00 00
+Fwd Packet Length Max           : value=6            width=15 bytes=2 encoded=06 00
+Total Backward Packets          : value=1            width=17 bytes=3 encoded=01 00 00
+Subflow Fwd Bytes               : value=6            width=21 bytes=3 encoded=06 00 00
+Max Packet Length               : value=6            width=15 bytes=2 encoded=06 00
+Total Length of Fwd Packets     : value=6            width=21 bytes=3 encoded=06 00 00
+Bwd Header Length               : value=20           width=21 bytes=3 encoded=14 00 00
+Flow Duration                   : value=0            width=27 bytes=4 encoded=00 00 00 00
+Fwd Header Length               : value=20           width=21 bytes=3 encoded=14 00 00
+
+----- EXACT FPGA PACKET -----
+Packet length : 45 bytes
+Start byte    : 0xAA
+End byte      : 0x55
+Packet HEX    : AA 06 00 06 00 06 00 00 00 06 00 00 00 11 D1 14 00 01 01 00 00 06 00 01 00 00 06 00 00 06 00 06 00 00 14 00 00 00 00 00 00 14 00 00 55
+
+----- FPGA RESPONSE -----
+Prediction     : NO VALID RESPONSE
+Status         : UART_TIMEOUT
+Error type     : UART_TIMEOUT
+Error message  : Timed out waiting for FPGA classification.
+
+----- TIMING -----
+
+==============================================================================
+SAMPLE 1
+==============================================================================
+
+----- DATASET / GROUND TRUTH -----
+Expected label : 0
+Dataset index  : 1
+
+----- ALL 24 DATASET FEATURES -----
+Max Packet Length               : 1669
+Min Packet Length               : 0
+Fwd Packet Length Max           : 549
+Bwd Packet Length Max           : 1669
+Total Length of Fwd Packets     : 858
+Total Length of Bwd Packets     : 3618
+Subflow Fwd Bytes               : 858
+Subflow Bwd Bytes               : 3618
+Fwd Header Length               : 332
+Bwd Header Length               : 264
+Destination Port                : 443
+Total Fwd Packets               : 10
+Total Backward Packets          : 8
+Subflow Fwd Packets             : 10
+Subflow Bwd Packets             : 8
+act_data_pkt_fwd                : 5
+Flow Duration                   : 30174097
+min_seg_size_forward            : 32
+ACK Flag Count                  : 0
+SYN Flag Count                  : 0
+RST Flag Count                  : 0
+FIN Flag Count                  : 0
+PSH Flag Count                  : 1
+URG Flag Count                  : 0
+
+----- 16 FPGA FEATURES SENT -----
+Bwd Packet Length Max           : value=1669         width=14 bytes=2 encoded=85 06
+Min Packet Length               : value=0            width=11 bytes=2 encoded=00 00
+Subflow Bwd Bytes               : value=3618         width=25 bytes=4 encoded=22 0E 00 00
+Total Length of Bwd Packets     : value=3618         width=25 bytes=4 encoded=22 0E 00 00
+Destination Port                : value=443          width=16 bytes=2 encoded=BB 01
+min_seg_size_forward            : value=32           width=11 bytes=2 encoded=20 00
+ACK Flag Count                  : value=0            width=1  bytes=1 encoded=00
+Subflow Bwd Packets             : value=8            width=17 bytes=3 encoded=08 00 00
+Fwd Packet Length Max           : value=549          width=15 bytes=2 encoded=25 02
+Total Backward Packets          : value=8            width=17 bytes=3 encoded=08 00 00
+Subflow Fwd Bytes               : value=858          width=21 bytes=3 encoded=5A 03 00
+Max Packet Length               : value=1669         width=15 bytes=2 encoded=85 06
+Total Length of Fwd Packets     : value=858          width=21 bytes=3 encoded=5A 03 00
+Bwd Header Length               : value=264          width=21 bytes=3 encoded=08 01 00
+Flow Duration                   : value=30174097     width=27 bytes=4 encoded=91 6B CC 01
+Fwd Header Length               : value=332          width=21 bytes=3 encoded=4C 01 00
+
+----- EXACT FPGA PACKET -----
+Packet length : 45 bytes
+Start byte    : 0xAA
+End byte      : 0x55
+Packet HEX    : AA 85 06 00 00 22 0E 00 00 22 0E 00 00 BB 01 20 00 00 08 00 00 25 02 08 00 00 5A 03 00 85 06 5A 03 00 08 01 00 91 6B CC 01 4C 01 00 55
+
+----- FPGA RESPONSE -----
+Prediction     : NO VALID RESPONSE
+Status         : UART_TIMEOUT
+Error type     : UART_TIMEOUT
+Error message  : Timed out waiting for FPGA classification.
+
+----- TIMING -----
+
+==============================================================================
+SAMPLE 2
+==============================================================================
+
+----- DATASET / GROUND TRUTH -----
+Expected label : 1
+Dataset index  : 2
+
+----- ALL 24 DATASET FEATURES -----
+Max Packet Length               : 389
+Min Packet Length               : 330
+Fwd Packet Length Max           : 389
+Bwd Packet Length Max           : 0
+Total Length of Fwd Packets     : 1438
+Total Length of Bwd Packets     : 0
+Subflow Fwd Bytes               : 1438
+Subflow Bwd Bytes               : 0
+Fwd Header Length               : 80
+Bwd Header Length               : 0
+Destination Port                : 52781
+Total Fwd Packets               : 4
+Total Backward Packets          : 0
+Subflow Fwd Packets             : 4
+Subflow Bwd Packets             : 0
+act_data_pkt_fwd                : 3
+Flow Duration                   : 109213
+min_seg_size_forward            : 20
+ACK Flag Count                  : 0
+SYN Flag Count                  : 0
+RST Flag Count                  : 0
+FIN Flag Count                  : 0
+PSH Flag Count                  : 0
+URG Flag Count                  : 0
+
+----- 16 FPGA FEATURES SENT -----
+Bwd Packet Length Max           : value=0            width=14 bytes=2 encoded=00 00
+Min Packet Length               : value=330          width=11 bytes=2 encoded=4A 01
+Subflow Bwd Bytes               : value=0            width=25 bytes=4 encoded=00 00 00 00
+Total Length of Bwd Packets     : value=0            width=25 bytes=4 encoded=00 00 00 00
+Destination Port                : value=52781        width=16 bytes=2 encoded=2D CE
+min_seg_size_forward            : value=20           width=11 bytes=2 encoded=14 00
+ACK Flag Count                  : value=0            width=1  bytes=1 encoded=00
+Subflow Bwd Packets             : value=0            width=17 bytes=3 encoded=00 00 00
+Fwd Packet Length Max           : value=389          width=15 bytes=2 encoded=85 01
+Total Backward Packets          : value=0            width=17 bytes=3 encoded=00 00 00
+Subflow Fwd Bytes               : value=1438         width=21 bytes=3 encoded=9E 05 00
+Max Packet Length               : value=389          width=15 bytes=2 encoded=85 01
+Total Length of Fwd Packets     : value=1438         width=21 bytes=3 encoded=9E 05 00
+Bwd Header Length               : value=0            width=21 bytes=3 encoded=00 00 00
+Flow Duration                   : value=109213       width=27 bytes=4 encoded=9D AA 01 00
+Fwd Header Length               : value=80           width=21 bytes=3 encoded=50 00 00
+
+----- EXACT FPGA PACKET -----
+Packet length : 45 bytes
+Start byte    : 0xAA
+End byte      : 0x55
+Packet HEX    : AA 00 00 4A 01 00 00 00 00 00 00 00 00 2D CE 14 00 00 00 00 00 85 01 00 00 00 9E 05 00 85 01 9E 05 00 00 00 00 9D AA 01 00 50 00 00 55
+
+----- FPGA RESPONSE -----
+Prediction     : NO VALID RESPONSE
+Status         : UART_TIMEOUT
+Error type     : UART_TIMEOUT
+Error message  : Timed out waiting for FPGA classification.
+
+----- TIMING -----
+
+==============================================================================
+SAMPLE 3
+==============================================================================
+
+----- DATASET / GROUND TRUTH -----
+Expected label : 1
+Dataset index  : 3
+
+----- ALL 24 DATASET FEATURES -----
+Max Packet Length               : 1472
+Min Packet Length               : 1472
+Fwd Packet Length Max           : 1472
+Bwd Packet Length Max           : 0
+Total Length of Fwd Packets     : 2944
+Total Length of Bwd Packets     : 0
+Subflow Fwd Bytes               : 2944
+Subflow Bwd Bytes               : 0
+Fwd Header Length               : 0
+Bwd Header Length               : 0
+Destination Port                : 37640
+Total Fwd Packets               : 2
+Total Backward Packets          : 0
+Subflow Fwd Packets             : 2
+Subflow Bwd Packets             : 0
+act_data_pkt_fwd                : 1
+Flow Duration                   : 0
+min_seg_size_forward            : 0
+ACK Flag Count                  : 0
+SYN Flag Count                  : 0
+RST Flag Count                  : 0
+FIN Flag Count                  : 0
+PSH Flag Count                  : 0
+URG Flag Count                  : 0
+
+----- 16 FPGA FEATURES SENT -----
+Bwd Packet Length Max           : value=0            width=14 bytes=2 encoded=00 00
+Min Packet Length               : value=1472         width=11 bytes=2 encoded=C0 05
+Subflow Bwd Bytes               : value=0            width=25 bytes=4 encoded=00 00 00 00
+Total Length of Bwd Packets     : value=0            width=25 bytes=4 encoded=00 00 00 00
+Destination Port                : value=37640        width=16 bytes=2 encoded=08 93
+min_seg_size_forward            : value=0            width=11 bytes=2 encoded=00 00
+ACK Flag Count                  : value=0            width=1  bytes=1 encoded=00
+Subflow Bwd Packets             : value=0            width=17 bytes=3 encoded=00 00 00
+Fwd Packet Length Max           : value=1472         width=15 bytes=2 encoded=C0 05
+Total Backward Packets          : value=0            width=17 bytes=3 encoded=00 00 00
+Subflow Fwd Bytes               : value=2944         width=21 bytes=3 encoded=80 0B 00
+Max Packet Length               : value=1472         width=15 bytes=2 encoded=C0 05
+Total Length of Fwd Packets     : value=2944         width=21 bytes=3 encoded=80 0B 00
+Bwd Header Length               : value=0            width=21 bytes=3 encoded=00 00 00
+Flow Duration                   : value=0            width=27 bytes=4 encoded=00 00 00 00
+Fwd Header Length               : value=0            width=21 bytes=3 encoded=00 00 00
+
+----- EXACT FPGA PACKET -----
+Packet length : 45 bytes
+Start byte    : 0xAA
+End byte      : 0x55
+Packet HEX    : AA 00 00 C0 05 00 00 00 00 00 00 00 00 08 93 00 00 00 00 00 00 C0 05 00 00 00 80 0B 00 C0 05 80 0B 00 00 00 00 00 00 00 00 00 00 00 55
+
+----- FPGA RESPONSE -----
+Prediction     : NO VALID RESPONSE
+Status         : UART_TIMEOUT
+Error type     : UART_TIMEOUT
+Error message  : Timed out waiting for FPGA classification.
+
+----- TIMING -----
+
+==============================================================================
+SAMPLE 4
+==============================================================================
+
+----- DATASET / GROUND TRUTH -----
+Expected label : 1
+Dataset index  : 4
+
+----- ALL 24 DATASET FEATURES -----
+Max Packet Length               : 393
+Min Packet Length               : 321
+Fwd Packet Length Max           : 393
+Bwd Packet Length Max           : 0
+Total Length of Fwd Packets     : 2088
+Total Length of Bwd Packets     : 0
+Subflow Fwd Bytes               : 2088
+Subflow Bwd Bytes               : 0
+Fwd Header Length               : 120
+Bwd Header Length               : 0
+Destination Port                : 65017
+Total Fwd Packets               : 6
+Total Backward Packets          : 0
+Subflow Fwd Packets             : 6
+Subflow Bwd Packets             : 0
+act_data_pkt_fwd                : 5
+Flow Duration                   : 218378
+min_seg_size_forward            : 20
+ACK Flag Count                  : 0
+SYN Flag Count                  : 0
+RST Flag Count                  : 0
+FIN Flag Count                  : 0
+PSH Flag Count                  : 0
+URG Flag Count                  : 0
+
+----- 16 FPGA FEATURES SENT -----
+Bwd Packet Length Max           : value=0            width=14 bytes=2 encoded=00 00
+Min Packet Length               : value=321          width=11 bytes=2 encoded=41 01
+Subflow Bwd Bytes               : value=0            width=25 bytes=4 encoded=00 00 00 00
+Total Length of Bwd Packets     : value=0            width=25 bytes=4 encoded=00 00 00 00
+Destination Port                : value=65017        width=16 bytes=2 encoded=F9 FD
+min_seg_size_forward            : value=20           width=11 bytes=2 encoded=14 00
+ACK Flag Count                  : value=0            width=1  bytes=1 encoded=00
+Subflow Bwd Packets             : value=0            width=17 bytes=3 encoded=00 00 00
+Fwd Packet Length Max           : value=393          width=15 bytes=2 encoded=89 01
+Total Backward Packets          : value=0            width=17 bytes=3 encoded=00 00 00
+Subflow Fwd Bytes               : value=2088         width=21 bytes=3 encoded=28 08 00
+Max Packet Length               : value=393          width=15 bytes=2 encoded=89 01
+Total Length of Fwd Packets     : value=2088         width=21 bytes=3 encoded=28 08 00
+Bwd Header Length               : value=0            width=21 bytes=3 encoded=00 00 00
+Flow Duration                   : value=218378       width=27 bytes=4 encoded=0A 55 03 00
+Fwd Header Length               : value=120          width=21 bytes=3 encoded=78 00 00
+
+----- EXACT FPGA PACKET -----
+Packet length : 45 bytes
+Start byte    : 0xAA
+End byte      : 0x55
+Packet HEX    : AA 00 00 41 01 00 00 00 00 00 00 00 00 F9 FD 14 00 00 00 00 00 89 01 00 00 00 28 08 00 89 01 28 08 00 00 00 00 0A 55 03 00 78 00 00 55
+
+----- FPGA RESPONSE -----
+Prediction     : NO VALID RESPONSE
+Status         : UART_TIMEOUT
+Error type     : UART_TIMEOUT
+Error message  : Timed out waiting for FPGA classification.
+
+----- TIMING -----
+
+==============================================================================
+SAMPLE 5
+==============================================================================
+
+----- DATASET / GROUND TRUTH -----
+Expected label : 0
+Dataset index  : 5
+
+----- ALL 24 DATASET FEATURES -----
+Max Packet Length               : 6
+Min Packet Length               : 6
+Fwd Packet Length Max           : 6
+Bwd Packet Length Max           : 0
+Total Length of Fwd Packets     : 12
+Total Length of Bwd Packets     : 0
+Subflow Fwd Bytes               : 12
+Subflow Bwd Bytes               : 0
+Fwd Header Length               : 40
+Bwd Header Length               : 0
+Destination Port                : 48570
+Total Fwd Packets               : 2
+Total Backward Packets          : 0
+Subflow Fwd Packets             : 2
+Subflow Bwd Packets             : 0
+act_data_pkt_fwd                : 1
+Flow Duration                   : 207
+min_seg_size_forward            : 20
+ACK Flag Count                  : 1
+SYN Flag Count                  : 0
+RST Flag Count                  : 0
+FIN Flag Count                  : 0
+PSH Flag Count                  : 0
+URG Flag Count                  : 0
+
+----- 16 FPGA FEATURES SENT -----
+Bwd Packet Length Max           : value=0            width=14 bytes=2 encoded=00 00
+Min Packet Length               : value=6            width=11 bytes=2 encoded=06 00
+Subflow Bwd Bytes               : value=0            width=25 bytes=4 encoded=00 00 00 00
+Total Length of Bwd Packets     : value=0            width=25 bytes=4 encoded=00 00 00 00
+Destination Port                : value=48570        width=16 bytes=2 encoded=BA BD
+min_seg_size_forward            : value=20           width=11 bytes=2 encoded=14 00
+ACK Flag Count                  : value=1            width=1  bytes=1 encoded=01
+Subflow Bwd Packets             : value=0            width=17 bytes=3 encoded=00 00 00
+Fwd Packet Length Max           : value=6            width=15 bytes=2 encoded=06 00
+Total Backward Packets          : value=0            width=17 bytes=3 encoded=00 00 00
+Subflow Fwd Bytes               : value=12           width=21 bytes=3 encoded=0C 00 00
+Max Packet Length               : value=6            width=15 bytes=2 encoded=06 00
+Total Length of Fwd Packets     : value=12           width=21 bytes=3 encoded=0C 00 00
+Bwd Header Length               : value=0            width=21 bytes=3 encoded=00 00 00
+Flow Duration                   : value=207          width=27 bytes=4 encoded=CF 00 00 00
+Fwd Header Length               : value=40           width=21 bytes=3 encoded=28 00 00
+
+----- EXACT FPGA PACKET -----
+Packet length : 45 bytes
+Start byte    : 0xAA
+End byte      : 0x55
+Packet HEX    : AA 00 00 06 00 00 00 00 00 00 00 00 00 BA BD 14 00 01 00 00 00 06 00 00 00 00 0C 00 00 06 00 0C 00 00 00 00 00 CF 00 00 00 28 00 00 55
+
+----- FPGA RESPONSE -----
+Prediction     : NO VALID RESPONSE
+Status         : UART_TIMEOUT
+Error type     : UART_TIMEOUT
+Error message  : Timed out waiting for FPGA classification.
+
+----- TIMING -----

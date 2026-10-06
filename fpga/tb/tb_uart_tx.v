@@ -3,7 +3,7 @@
 // Company: 
 // Engineer: 
 // 
-// Create Date: 06/24/2026 12:55:44 AM
+// Create Date: 09/28/2026 12:57:55 AM
 // Design Name: 
 // Module Name: tb_uart_tx
 // Project Name: 
@@ -19,98 +19,294 @@
 // 
 //////////////////////////////////////////////////////////////////////////////////
 
+`timescale 1ns / 1ps
 
-module tb_uart_tx();
+module tb_uart_tx;
 
-    parameter CLKS_PER_BIT = 868;
-    parameter CLK_PERIOD = 10; 
+    reg        clk;
+    reg        rst;
 
-    reg clk;
-    reg rst;
-    reg [7:0] tx_data;
-    reg tx_start;
-    wire tx;
-    wire tx_busy;
+    reg [7:0]  tx_data;
+    reg        tx_start;
 
-    // Instantiate the Unit Under Test (UUT)
+    wire       tx;
+    wire       busy;
+    wire       tx_done;
+
+    integer pass_count;
+    integer fail_count;
+
+    localparam CLK_FREQ      = 10_000_000;
+    localparam BAUD_RATE     = 1_000_000;
+    localparam CLKS_PER_BIT  = 10;
+
+
     uart_tx #(
-        .CLKS_PER_BIT(CLKS_PER_BIT)
-    ) uut (
+        .CLK_FREQ(CLK_FREQ),
+        .BAUD_RATE(BAUD_RATE)
+    ) dut (
         .clk(clk),
         .rst(rst),
         .tx_data(tx_data),
         .tx_start(tx_start),
         .tx(tx),
-        .tx_busy(tx_busy)
+        .busy(busy),
+        .tx_done(tx_done)
     );
 
-    // Generate 100 MHz Clock
-    always #(CLK_PERIOD/2) clk = ~clk;
 
-    // Task to simulate the PC receiving a byte
-    reg [7:0] received_byte;
-    task receive_byte;
+    always #5 clk = ~clk;
+
+
+    // ------------------------------------------------------------
+    // Wait one UART bit
+    // ------------------------------------------------------------
+
+    task wait_bit;
+
         integer i;
+
         begin
-            // Wait for Start Bit (tx goes to 0)
-            @(negedge tx);
-            
-            // Wait half a bit to sample in the middle
-            #(CLK_PERIOD * (CLKS_PER_BIT / 2));
-            
-            // Wait a full bit to reach the first data bit
-            #(CLK_PERIOD * CLKS_PER_BIT);
-            
-            // Sample 8 data bits
-            for (i = 0; i < 8; i = i + 1) begin
-                received_byte[i] = tx;
-                #(CLK_PERIOD * CLKS_PER_BIT);
-            end
-            
-            // Wait for Stop Bit
-            #(CLK_PERIOD * CLKS_PER_BIT);
+
+            for (i = 0; i < CLKS_PER_BIT; i = i + 1)
+                @(posedge clk);
+
         end
+
     endtask
 
+
+    // ------------------------------------------------------------
+    // Check one byte
+    // ------------------------------------------------------------
+
+    task check_byte;
+
+        input [7:0] expected_data;
+
+        integer i;
+        integer done_seen;
+
+        begin
+
+            done_seen = 0;
+
+            $display("");
+            $display("TRANSMITTING = %h", expected_data);
+
+
+            // ----------------------------------------------------
+            // Start transmission
+            // ----------------------------------------------------
+
+            @(negedge clk);
+
+            tx_data  = expected_data;
+            tx_start = 1'b1;
+
+            @(negedge clk);
+
+            tx_start = 1'b0;
+
+
+            // ----------------------------------------------------
+            // Start bit
+            // ----------------------------------------------------
+
+            @(negedge clk);
+
+            if (tx === 1'b0) begin
+
+                $display("START BIT: PASS");
+                pass_count = pass_count + 1;
+
+            end
+            else begin
+
+                $display("START BIT: FAIL");
+                fail_count = fail_count + 1;
+
+            end
+
+
+            wait_bit;
+
+
+            // ----------------------------------------------------
+            // Data bits
+            // ----------------------------------------------------
+
+            for (i = 0; i < 8; i = i + 1) begin
+
+                @(negedge clk);
+
+                if (tx === expected_data[i]) begin
+
+                    $display(
+                        "DATA BIT %0d: PASS = %b",
+                        i,
+                        tx
+                    );
+
+                    pass_count = pass_count + 1;
+
+                end
+                else begin
+
+                    $display(
+                        "DATA BIT %0d: FAIL = %b EXPECTED=%b",
+                        i,
+                        tx,
+                        expected_data[i]
+                    );
+
+                    fail_count = fail_count + 1;
+
+                end
+
+                wait_bit;
+
+            end
+
+
+            // ----------------------------------------------------
+            // Stop bit
+            // ----------------------------------------------------
+
+            @(negedge clk);
+
+            if (tx === 1'b1) begin
+
+                $display("STOP BIT: PASS");
+                pass_count = pass_count + 1;
+
+            end
+            else begin
+
+                $display("STOP BIT: FAIL");
+                fail_count = fail_count + 1;
+
+            end
+
+
+            // ----------------------------------------------------
+            // Wait for TX DONE
+            //
+            // tx_done is only one clock wide, so monitor it
+            // on every positive clock edge.
+            // ----------------------------------------------------
+
+            for (i = 0; i < CLKS_PER_BIT + 2; i = i + 1) begin
+
+                @(posedge clk);
+
+                if (tx_done === 1'b1)
+                    done_seen = 1;
+
+            end
+
+
+            if (done_seen == 1) begin
+
+                $display("TX DONE: PASS");
+                pass_count = pass_count + 1;
+
+            end
+            else begin
+
+                $display("TX DONE: FAIL");
+                fail_count = fail_count + 1;
+
+            end
+
+
+            // ----------------------------------------------------
+            // TX should be idle
+            // ----------------------------------------------------
+
+            if (tx === 1'b1) begin
+
+                $display("IDLE TX: PASS");
+                pass_count = pass_count + 1;
+
+            end
+            else begin
+
+                $display("IDLE TX: FAIL");
+                fail_count = fail_count + 1;
+
+            end
+
+        end
+
+    endtask
+
+
+    // ------------------------------------------------------------
+    // Main
+    // ------------------------------------------------------------
+
     initial begin
-        // Initialize Inputs
-        clk = 0;
-        rst = 1;
-        tx_data = 0;
-        tx_start = 0;
 
-        #100;
-        rst = 0;
-        #100;
+        clk      = 1'b0;
+        rst      = 1'b1;
 
-        $display("--- Starting UART TX Simulation ---");
+        tx_data  = 8'd0;
+        tx_start = 1'b0;
 
-        // Test 1: Send 0x55 (Benign / Alternating bits)
-        $display("Telling FPGA to send: 0x55");
-        tx_data = 8'h55;
-        tx_start = 1;
-        #CLK_PERIOD; // Pulse start for 1 clock cycle
-        tx_start = 0;
+        pass_count = 0;
+        fail_count = 0;
 
-        // Call the PC receiver task to listen to the tx wire
-        receive_byte();
-        $display("PC Received: 0x%h | Expected: 0x55", received_byte);
 
-        #1000;
+        $display("");
+        $display("==============================================");
+        $display(" UART TX TEST");
+        $display(" 8N1 / LSB FIRST");
+        $display(" CLK = 10 MHz");
+        $display(" BAUD = 1 MHz");
+        $display("==============================================");
+        $display("");
 
-        // Test 2: Send 0x01 (DDoS Detected)
-        $display("Telling FPGA to send: 0x01");
-        tx_data = 8'h01;
-        tx_start = 1;
-        #CLK_PERIOD;
-        tx_start = 0;
 
-        receive_byte();
-        $display("PC Received: 0x%h | Expected: 0x01", received_byte);
+        // Reset
 
-        #1000;
-        $display("--- Simulation Complete ---");
+        #20;
+
+        rst = 1'b0;
+
+        #20;
+
+
+        // Test bytes
+
+        check_byte(8'hA5);
+
+        check_byte(8'h3C);
+
+        check_byte(8'h81);
+
+
+        // --------------------------------------------------------
+        // Final result
+        // --------------------------------------------------------
+
+        $display("");
+        $display("==============================================");
+        $display("PASS = %0d", pass_count);
+        $display("FAIL = %0d", fail_count);
+        $display("==============================================");
+
+        if (fail_count == 0)
+            $display("UART TX TEST PASSED");
+        else
+            $display("UART TX TEST FAILED");
+
+        $display("");
+
+        #20;
+
         $finish;
+
     end
 
 endmodule

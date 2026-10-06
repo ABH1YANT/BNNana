@@ -1,0 +1,12 @@
+FPGA BNN HARDWARE TEST
+==============================================================================
+Dataset: C:\Users\DELL\Desktop\BNNana\datasets\processed\test_fpga.csv
+UART: COM13 @ 115200
+Samples: 10
+
+[      1/10     ] TIMEOUT | Expected=0 | Timed out waiting for FPGA classification.
+[      2/10     ] TIMEOUT | Expected=0 | Timed out waiting for FPGA classification.
+[      3/10     ] TIMEOUT | Expected=1 | Timed out waiting for FPGA classification.
+[      4/10     ] TIMEOUT | Expected=1 | Timed out waiting for FPGA classification.
+[      5/10     ] TIMEOUT | Expected=1 | Timed out waiting for FPGA classification.
+[      6/10     ] TIMEOUT | Expected=0 | Timed out waiting for FPGA classification.

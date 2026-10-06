@@ -1,155 +1,557 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 06/24/2026 01:57:00 AM
-// Design Name: 
-// Module Name: tb_packet_parser
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
+
+module packet_parser_tb;
+
+    // ============================================================
+    // DUT signals
+    // ============================================================
+
+    reg         clk;
+    reg         rst;
+
+    reg  [7:0]  rx_data;
+    reg         rx_valid;
+
+    wire [3:0]  feature_index;
+    wire [26:0] feature_in;
+    wire        feature_valid;
+
+    wire        packet_done;
+    wire        packet_error;
 
 
-module tb_packet_parser();
+    // ============================================================
+    // DUT
+    // ============================================================
 
-    parameter FEATURE_COUNT = 15;
-    parameter START_BYTE = 8'hAA;
-    parameter CLK_PERIOD = 10;
+    packet_parser dut (
+        .clk           (clk),
+        .rst           (rst),
 
-    reg clk;
-    reg rst;
-    reg [7:0] rx_data;
-    reg rx_valid;
-    
-    wire [(FEATURE_COUNT * 8)-1:0] feature_vector;
-    wire packet_valid;
+        .rx_data       (rx_data),
+        .rx_valid      (rx_valid),
 
-    // Instantiate the Unit Under Test (UUT)
-    packet_parser #(
-        .FEATURE_COUNT(FEATURE_COUNT),
-        .START_BYTE(START_BYTE)
-    ) uut (
-        .clk(clk),
-        .rst(rst),
-        .rx_data(rx_data),
-        .rx_valid(rx_valid),
-        .feature_vector(feature_vector),
-        .packet_valid(packet_valid)
+        .feature_index (feature_index),
+        .feature_in    (feature_in),
+        .feature_valid (feature_valid),
+
+        .packet_done   (packet_done),
+        .packet_error  (packet_error)
     );
 
-    // Generate 100 MHz Clock
-    always #(CLK_PERIOD/2) clk = ~clk;
 
-    // Task to simulate the UART Controller sending a byte
-    task send_uart_byte;
-        input [7:0] data;
-        begin
-            rx_data = data;
-            rx_valid = 1'b1;
-            #CLK_PERIOD; // Pulse valid for exactly 1 clock cycle
-            rx_valid = 1'b0;
-            #(CLK_PERIOD * 10); // Wait a bit before the next byte arrives
-        end
-    endtask
-
-    // --- THE PULSE CATCHER ---
-    // This runs in the background and catches the 10ns pulse
-    reg pulse_caught;
-    always @(posedge packet_valid) begin
-        pulse_caught = 1'b1;
-    end
-
-    integer i;
-    reg [7:0] expected_checksum;
+    // ============================================================
+    // 100 MHz simulation clock
+    // ============================================================
 
     initial begin
-        clk = 0;
-        rst = 1;
-        rx_data = 0;
-        rx_valid = 0;
-        pulse_caught = 0;
+        clk = 1'b0;
+        forever #5 clk = ~clk;
+    end
 
-        #100;
-        rst = 0;
-        #100;
 
-        $display("--- Starting Packet Parser Simulation ---");
+    // ============================================================
+    // Test values
+    //
+    // Chosen values are deliberately non-zero and easy to verify.
+    // ============================================================
 
-        // ---------------------------------------------------------
-        // Test 1: Perfect Packet
-        // ---------------------------------------------------------
-        $display("Test 1: Sending Perfect Packet...");
-        expected_checksum = 0;
-        pulse_caught = 0; // Reset the catcher flag
-        
-        send_uart_byte(START_BYTE); // Send 0xAA
-        
-        for (i = 1; i <= FEATURE_COUNT; i = i + 1) begin
-            send_uart_byte(i); // Send features 1, 2, 3... 15
-            expected_checksum = expected_checksum + i;
+    reg [13:0] f0;
+    reg [10:0] f1;
+    reg [24:0] f2;
+    reg [24:0] f3;
+    reg [15:0] f4;
+    reg [10:0] f5;
+    reg        f6;
+    reg [16:0] f7;
+    reg [14:0] f8;
+    reg [16:0] f9;
+    reg [20:0] f10;
+    reg [14:0] f11;
+    reg [20:0] f12;
+    reg [20:0] f13;
+    reg [26:0] f14;
+    reg [20:0] f15;
+
+
+    // ============================================================
+    // Expected feature counter
+    // ============================================================
+
+    integer feature_count;
+    integer errors;
+
+
+    // ============================================================
+    // Send one byte
+    // ============================================================
+
+    task send_byte;
+
+        input [7:0] data;
+
+        begin
+
+            @(posedge clk);
+
+            rx_data  <= data;
+            rx_valid <= 1'b1;
+
+            @(posedge clk);
+
+            rx_valid <= 1'b0;
+            rx_data  <= 8'h00;
+
         end
-        
-        // Send the correct checksum
-        send_uart_byte(expected_checksum); 
-        
+
+    endtask
+
+
+    // ============================================================
+    // Check one feature
+    // ============================================================
+
+    task check_feature;
+
+        input [3:0]  expected_index;
+        input [26:0] expected_value;
+
+        begin
+
+            @(posedge clk);
+
+            if (feature_valid !== 1'b1) begin
+
+                $display(
+                    "ERROR: Expected feature_valid for feature %0d",
+                    expected_index
+                );
+
+                errors = errors + 1;
+
+            end
+            else begin
+
+                if (feature_index !== expected_index) begin
+
+                    $display(
+                        "ERROR: Feature index mismatch. Expected=%0d Got=%0d",
+                        expected_index,
+                        feature_index
+                    );
+
+                    errors = errors + 1;
+
+                end
+
+                if (feature_in !== expected_value) begin
+
+                    $display(
+                        "ERROR: Feature %0d value mismatch. Expected=%0d (0x%h) Got=%0d (0x%h)",
+                        expected_index,
+                        expected_value,
+                        expected_value,
+                        feature_in,
+                        feature_in
+                    );
+
+                    errors = errors + 1;
+
+                end
+
+                if ((feature_index === expected_index) &&
+                    (feature_in === expected_value)) begin
+
+                    $display(
+                        "PASS: Feature %0d = %0d (0x%h)",
+                        expected_index,
+                        feature_in,
+                        feature_in
+                    );
+
+                end
+
+            end
+
+        end
+
+    endtask
+
+
+    // ============================================================
+    // Main test
+    // ============================================================
+
+    initial begin
+
+        // --------------------------------------------------------
+        // Initialize
+        // --------------------------------------------------------
+
+        rst      = 1'b1;
+        rx_data  = 8'h00;
+        rx_valid = 1'b0;
+
+        feature_count = 0;
+        errors        = 0;
+
+
+        // --------------------------------------------------------
+        // Test feature values
+        // --------------------------------------------------------
+
+        f0  = 14'd12345;
+        f1  = 11'd987;
+        f2  = 25'd1234567;
+        f3  = 25'd7654321;
+        f4  = 16'd54321;
+        f5  = 11'd1200;
+        f6  = 1'b1;
+        f7  = 17'd54321;
+        f8  = 15'd12345;
+        f9  = 17'd98765;
+        f10 = 21'd654321;
+        f11 = 15'd23456;
+        f12 = 21'd765432;
+        f13 = 21'd456789;
+        f14 = 27'd98765432;
+        f15 = 21'd345678;
+
+
+        // --------------------------------------------------------
+        // Reset
+        // --------------------------------------------------------
+
+        repeat (3)
+            @(posedge clk);
+
+        rst <= 1'b0;
+
+        repeat (2)
+            @(posedge clk);
+
+
+        $display("");
+        $display("============================================================");
+        $display(" PACKET PARSER TEST");
+        $display("============================================================");
+        $display("Packet format:");
+        $display("  Header  : AA");
+        $display("  Payload : 43 bytes");
+        $display("  Footer  : 55");
+        $display("============================================================");
+        $display("");
+
+
+        // ========================================================
+        // HEADER
+        // ========================================================
+
+        send_byte(8'hAA);
+
+
+        // ========================================================
+        // FEATURE 0
+        // Bwd Packet Length Max
+        // 14 bits
+        //
+        // Little endian:
+        // byte0 = [7:0]
+        // byte1 = [13:8]
+        // ========================================================
+
+        send_byte(f0[7:0]);
+        send_byte({2'b00, f0[13:8]});
+
+        check_feature(4'd0, {{13{1'b0}}, f0});
+
+
+        // ========================================================
+        // FEATURE 1
+        // Min Packet Length
+        // 11 bits
+        // ========================================================
+
+        send_byte(f1[7:0]);
+        send_byte({5'b00000, f1[10:8]});
+
+        check_feature(4'd1, {{16{1'b0}}, f1});
+
+
+        // ========================================================
+        // FEATURE 2
+        // Subflow Bwd Bytes
+        // 25 bits
+        // ========================================================
+
+        send_byte(f2[7:0]);
+        send_byte(f2[15:8]);
+        send_byte(f2[23:16]);
+        send_byte({7'b0000000, f2[24]});
+
+        check_feature(4'd2, {{2{1'b0}}, f2});
+
+
+        // ========================================================
+        // FEATURE 3
+        // Total Length of Bwd Packets
+        // 25 bits
+        // ========================================================
+
+        send_byte(f3[7:0]);
+        send_byte(f3[15:8]);
+        send_byte(f3[23:16]);
+        send_byte({7'b0000000, f3[24]});
+
+        check_feature(4'd3, {{2{1'b0}}, f3});
+
+
+        // ========================================================
+        // FEATURE 4
+        // Destination Port
+        // 16 bits
+        // ========================================================
+
+        send_byte(f4[7:0]);
+        send_byte(f4[15:8]);
+
+        check_feature(4'd4, {{11{1'b0}}, f4});
+
+
+        // ========================================================
+        // FEATURE 5
+        // min_seg_size_forward
+        // 11 bits
+        // ========================================================
+
+        send_byte(f5[7:0]);
+        send_byte({5'b00000, f5[10:8]});
+
+        check_feature(4'd5, {{16{1'b0}}, f5});
+
+
+        // ========================================================
+        // FEATURE 6
+        // ACK Flag Count
+        // 1 bit
+        // ========================================================
+
+        send_byte({7'b0000000, f6});
+
+        check_feature(4'd6, {{26{1'b0}}, f6});
+
+
+        // ========================================================
+        // FEATURE 7
+        // Subflow Bwd Packets
+        // 17 bits
+        // ========================================================
+
+        send_byte(f7[7:0]);
+        send_byte(f7[15:8]);
+        send_byte({7'b0000000, f7[16]});
+
+        check_feature(4'd7, {{10{1'b0}}, f7});
+
+
+        // ========================================================
+        // FEATURE 8
+        // Fwd Packet Length Max
+        // 15 bits
+        // ========================================================
+
+        send_byte(f8[7:0]);
+        send_byte({1'b0, f8[14:8]});
+
+        check_feature(4'd8, {{12{1'b0}}, f8});
+
+
+        // ========================================================
+        // FEATURE 9
+        // Total Backward Packets
+        // 17 bits
+        // ========================================================
+
+        send_byte(f9[7:0]);
+        send_byte(f9[15:8]);
+        send_byte({7'b0000000, f9[16]});
+
+        check_feature(4'd9, {{10{1'b0}}, f9});
+
+
+        // ========================================================
+        // FEATURE 10
+        // Subflow Fwd Bytes
+        // 21 bits
+        // ========================================================
+
+        send_byte(f10[7:0]);
+        send_byte(f10[15:8]);
+        send_byte({3'b000, f10[20:16]});
+
+        check_feature(4'd10, {{6{1'b0}}, f10});
+
+
+        // ========================================================
+        // FEATURE 11
+        // Max Packet Length
+        // 15 bits
+        // ========================================================
+
+        send_byte(f11[7:0]);
+        send_byte({1'b0, f11[14:8]});
+
+        check_feature(4'd11, {{12{1'b0}}, f11});
+
+
+        // ========================================================
+        // FEATURE 12
+        // Total Length of Fwd Packets
+        // 21 bits
+        // ========================================================
+
+        send_byte(f12[7:0]);
+        send_byte(f12[15:8]);
+        send_byte({3'b000, f12[20:16]});
+
+        check_feature(4'd12, {{6{1'b0}}, f12});
+
+
+        // ========================================================
+        // FEATURE 13
+        // Bwd Header Length
+        // 21 bits
+        // ========================================================
+
+        send_byte(f13[7:0]);
+        send_byte(f13[15:8]);
+        send_byte({3'b000, f13[20:16]});
+
+        check_feature(4'd13, {{6{1'b0}}, f13});
+
+
+        // ========================================================
+        // FEATURE 14
+        // Flow Duration
+        // 27 bits
+        // ========================================================
+
+        send_byte(f14[7:0]);
+        send_byte(f14[15:8]);
+        send_byte(f14[23:16]);
+        send_byte({5'b00000, f14[26:24]});
+
+        check_feature(4'd14, f14);
+
+
+        // ========================================================
+        // FEATURE 15
+        // Fwd Header Length
+        // 21 bits
+        // ========================================================
+
+        send_byte(f15[7:0]);
+        send_byte(f15[15:8]);
+        send_byte({3'b000, f15[20:16]});
+
+        check_feature(4'd15, {{6{1'b0}}, f15});
+
+
+        // ========================================================
+        // FOOTER
+        // ========================================================
+
+        send_byte(8'h55);
+
+
+        // Give DUT time to generate packet_done
+        @(posedge clk);
+
+
+        // ========================================================
+        // Check packet_done
+        // ========================================================
+
+        if (packet_done !== 1'b1) begin
+
+            $display("ERROR: packet_done was not asserted.");
+
+            errors = errors + 1;
+
+        end
+        else begin
+
+            $display("PASS: packet_done asserted.");
+
+        end
+
+
+        // packet_error must remain low
+        if (packet_error !== 1'b0) begin
+
+            $display("ERROR: packet_error asserted unexpectedly.");
+
+            errors = errors + 1;
+
+        end
+        else begin
+
+            $display("PASS: packet_error remained LOW.");
+
+        end
+
+
+        // ========================================================
+        // Final result
+        // ========================================================
+
+        $display("");
+        $display("============================================================");
+
+        if (errors == 0) begin
+
+            $display(" ALL TESTS PASSED");
+            $display(" 16/16 features decoded correctly");
+            $display(" Packet footer detected correctly");
+            $display(" No packet error");
+            $display("============================================================");
+
+        end
+        else begin
+
+            $display(" TEST FAILED");
+            $display(" Errors = %0d", errors);
+            $display("============================================================");
+
+        end
+
+
         #50;
-        // Check our flag instead of the raw wire
-        if (pulse_caught == 1'b1)
-            $display("SUCCESS: packet_valid pulsed! Checksum matched (0x%h).", expected_checksum);
-        else
-            $display("FAIL: packet_valid did not pulse.");
 
-        #100;
-
-        // ---------------------------------------------------------
-        // Test 2: Wrong Start Byte (Noise on the line)
-        // ---------------------------------------------------------
-        $display("Test 2: Sending Packet with Wrong Start Byte (0xBB)...");
-        pulse_caught = 0; // Reset flag
-        
-        send_uart_byte(8'hBB); // Wrong start byte
-        for (i = 1; i <= FEATURE_COUNT; i = i + 1) send_uart_byte(i);
-        send_uart_byte(expected_checksum);
-        
-        #50;
-        if (pulse_caught == 1'b0)
-            $display("SUCCESS: Ignored bad start byte.");
-        else
-            $display("FAIL: It accepted a bad start byte!");
-
-        #100;
-
-        // ---------------------------------------------------------
-        // Test 3: Corrupted Checksum
-        // ---------------------------------------------------------
-        $display("Test 3: Sending Packet with Corrupted Checksum...");
-        pulse_caught = 0; // Reset flag
-        
-        send_uart_byte(START_BYTE);
-        for (i = 1; i <= FEATURE_COUNT; i = i + 1) send_uart_byte(i);
-        
-        // Send a bad checksum (0xFF instead of 0x78)
-        send_uart_byte(8'hFF); 
-        
-        #50;
-        if (pulse_caught == 1'b0)
-            $display("SUCCESS: Ignored bad checksum.");
-        else
-            $display("FAIL: It accepted a bad checksum!");
-
-        #100;
-        $display("--- Simulation Complete ---");
         $finish;
+
+    end
+
+
+    // ============================================================
+    // Monitor every feature_valid pulse
+    // ============================================================
+
+    always @(posedge clk) begin
+
+        if (feature_valid) begin
+
+            feature_count = feature_count + 1;
+
+            $display(
+                "  Feature pulse: index=%0d value=%0d (0x%h)",
+                feature_index,
+                feature_in,
+                feature_in
+            );
+
+        end
+
     end
 
 endmodule

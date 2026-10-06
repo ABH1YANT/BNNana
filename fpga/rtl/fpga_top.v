@@ -1,108 +1,233 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 06/26/2026 02:07:43 AM
-// Design Name: 
-// Module Name: fpga_top
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
-
 
 module fpga_top #(
-    parameter CLKS_PER_BIT = 868,
-    parameter FEATURE_COUNT = 15,
-    parameter FEATURE_WIDTH = 8,
-    parameter NEURON_COUNT = 16,
-    parameter ACC_WIDTH = 16
+    parameter CLK_FREQ  = 75_000_000,
+    parameter BAUD_RATE = 115200
 )(
     input wire clk,
     input wire rst,
-    input wire rx,
-    output wire tx
+    input wire uart_rx_pin,
+    output wire uart_tx_pin
 );
 
-    // --- Internal Wires ---
-    
-    // UART <-> Parser/FSM
+    // ============================================================
+    // CLOCK WIZARD
+    //
+    // Board input clock:
+    //     100 MHz
+    //
+    // Generated system clock:
+    //     75 MHz
+    // ============================================================
+
+    wire clk_sys;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire clk_locked;
+
+    clk_wiz_0 clk_wiz_inst (
+        .clk_in1  (clk),
+        .reset    (rst),
+        .clk_out1 (clk_sys),
+        .locked   (clk_locked)
+    );
+
+
+    // ============================================================
+    // SYSTEM RESET
+    //
+    // The system remains in reset until:
+    //     rst = 0
+    //     clk_locked = 1
+    // ============================================================
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire rst_sys;
+
+    assign rst_sys = rst | ~clk_locked;
+
+
+    // ============================================================
+    // UART RX
+    // ============================================================
+
     wire [7:0] rx_data;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
     wire rx_valid;
-    wire [7:0] tx_data;
-    wire tx_start;
-    wire tx_busy;
-    
-    // Parser <-> Register/FSM
-    wire [(FEATURE_COUNT * FEATURE_WIDTH)-1:0] parsed_features;
-    wire packet_valid;
-    
-    // Register <-> Inference Core
-    wire [(FEATURE_COUNT * FEATURE_WIDTH)-1:0] registered_features;
-    wire load_enable;
-    
-    // BRAM <-> Inference Core
-    wire [(NEURON_COUNT * FEATURE_COUNT)-1:0] all_weights;
-    wire [(NEURON_COUNT * ACC_WIDTH)-1:0] all_thresholds;
-    
-    // Inference Core <-> FSM
+
+    wire rx_busy;
+
+    uart_rx #(
+        .CLK_FREQ  (CLK_FREQ),
+        .BAUD_RATE (BAUD_RATE)
+    ) uart_rx_inst (
+        .clk      (clk_sys),
+        .rst      (rst_sys),
+        .rx       (uart_rx_pin),
+        .rx_data  (rx_data),
+        .rx_valid (rx_valid),
+        .busy     (rx_busy)
+    );
+
+
+    // ============================================================
+    // PACKET PARSER
+    // ============================================================
+
+    wire [3:0]  feature_index;
+    wire [26:0] feature_in;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire feature_valid;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire packet_done;
+
+    wire packet_error;
+
+    packet_parser packet_parser_inst (
+        .clk           (clk_sys),
+        .rst           (rst_sys),
+        .rx_data       (rx_data),
+        .rx_valid      (rx_valid),
+        .feature_index (feature_index),
+        .feature_in    (feature_in),
+        .feature_valid (feature_valid),
+        .packet_done   (packet_done),
+        .packet_error  (packet_error)
+    );
+
+
+    // ============================================================
+    // FEATURE REGISTER
+    // ============================================================
+
+    wire [277:0] features;
+
+    feature_register feature_register_inst (
+        .clk           (clk_sys),
+        .rst           (rst_sys),
+        .load          (feature_valid),
+        .feature_index (feature_index),
+        .feature_in    (feature_in),
+        .features      (features)
+    );
+
+
+    // ============================================================
+    // PREPROCESSING
+    //
+    // BRAM LUTs
+    //     ↓
+    // q0..q15 registers
+    //     ↓
+    // preprocessed
+    // ============================================================
+
+    wire [127:0] preprocessed;
+
+    preprocessing preprocessing_inst (
+        .clk          (clk_sys),
+        .features     (features),
+        .preprocessed (preprocessed)
+    );
+
+
+    // ============================================================
+    // INFERENCE CORE
+    // ============================================================
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire inference_start;
+
+    wire inference_busy;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire inference_done;
+
     wire classification;
 
-    // --- Module Instantiations ---
-
-    uart_controller #(.CLKS_PER_BIT(CLKS_PER_BIT)) uart_inst (
-        .clk(clk), .rst(rst), .rx(rx), .tx(tx),
-        .rx_data(rx_data), .rx_valid(rx_valid),
-        .tx_data(tx_data), .tx_start(tx_start), .tx_busy(tx_busy)
+    inference_core inference_core_inst (
+        .clk             (clk_sys),
+        .rst             (rst_sys),
+        .start           (inference_start),
+        .features        (preprocessed),
+        .classification  (classification),
+        .inference_done  (inference_done),
+        .busy            (inference_busy)
     );
 
-    packet_parser #(.FEATURE_COUNT(FEATURE_COUNT), .START_BYTE(8'hAA)) parser_inst (
-        .clk(clk), .rst(rst),
-        .rx_data(rx_data), .rx_valid(rx_valid),
-        .feature_vector(parsed_features), .packet_valid(packet_valid)
+
+    // ============================================================
+    // CONTROLLER FSM
+    // ============================================================
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire result_valid;
+
+    // IMPORTANT:
+    // This is separate from inference_busy.
+    // controller_fsm and inference_core each drive their own
+    // busy output.
+
+    wire controller_busy;
+
+    controller_fsm controller_fsm_inst (
+        .clk             (clk_sys),
+        .rst             (rst_sys),
+        .start           (packet_done),
+        .inference_done  (inference_done),
+        .inference_start (inference_start),
+        .busy            (controller_busy),
+        .result_valid    (result_valid)
     );
 
-    feature_register #(.FEATURE_COUNT(FEATURE_COUNT), .FEATURE_WIDTH(FEATURE_WIDTH)) reg_inst (
-        .clk(clk), .rst(rst),
-        .feature_vector(parsed_features), .load_enable(load_enable),
-        .registered_features(registered_features)
+
+    // ============================================================
+    // UART CONTROLLER
+    // ============================================================
+
+    wire [7:0] tx_data;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire tx_start;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire tx_busy;
+
+    wire tx_done;
+
+    wire uart_controller_busy;
+
+    uart_controller uart_controller_inst (
+        .clk             (clk_sys),
+        .rst             (rst_sys),
+        .result_valid    (result_valid),
+        .classification  (classification),
+        .tx_data         (tx_data),
+        .tx_start        (tx_start),
+        .tx_busy         (tx_busy),
+        .tx_done         (tx_done),
+        .busy            (uart_controller_busy)
     );
 
-    weight_bram #(.NEURON_COUNT(NEURON_COUNT), .INPUT_COUNT(FEATURE_COUNT)) w_bram_inst (
-        .all_weights(all_weights)
-    );
 
-    threshold_bram #(.NEURON_COUNT(NEURON_COUNT), .ACC_WIDTH(ACC_WIDTH)) t_bram_inst (
-        .all_thresholds(all_thresholds)
-    );
+    // ============================================================
+    // UART TX
+    // ============================================================
 
-    // From Workstream C1!
-    inference_core #(
-        .FEATURE_COUNT(FEATURE_COUNT), .HIDDEN_NEURON_COUNT(NEURON_COUNT),
-        .FEATURE_WIDTH(FEATURE_WIDTH), .ACC_WIDTH(ACC_WIDTH)
-    ) ai_core_inst (
-        .feature_vector(registered_features),
-        .hidden_weights(all_weights),
-        .hidden_thresholds(all_thresholds),
-        .output_weights(16'hFFFF),     // Hardcoded output weights for now
-        .output_threshold(16'sd10),    // Hardcoded output threshold for now
-        .classification(classification)
-    );
-
-    controller_fsm fsm_inst (
-        .clk(clk), .rst(rst),
-        .packet_valid(packet_valid), .load_enable(load_enable),
-        .classification(classification),
-        .tx_data(tx_data), .tx_start(tx_start), .tx_busy(tx_busy)
+    uart_tx #(
+        .CLK_FREQ  (CLK_FREQ),
+        .BAUD_RATE (BAUD_RATE)
+    ) uart_tx_inst (
+        .clk      (clk_sys),
+        .rst      (rst_sys),
+        .tx_data  (tx_data),
+        .tx_start (tx_start),
+        .tx       (uart_tx_pin),
+        .busy     (tx_busy),
+        .tx_done  (tx_done)
     );
 
 endmodule

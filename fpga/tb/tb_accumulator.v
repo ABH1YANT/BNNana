@@ -1,89 +1,211 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 06/22/2026 10:45:57 PM
-// Design Name: 
-// Module Name: tb_accumulator
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
 
+module tb_accumulator;
 
-module tb_accumulator();
+    localparam INPUT_COUNT = 16;
+    localparam INPUT_WIDTH = 8;
+    localparam ACC_WIDTH   = 16;
 
-    // We override the parameters to 3 inputs just for easy manual math verification
-    parameter INPUT_COUNT = 3;
-    parameter INPUT_WIDTH = 8;
-    parameter ACC_WIDTH = 16;
+    reg [127:0] inputs;
+    reg [15:0]  weights;
 
-    // Inputs to the module (Registers in testbench)
-    reg [(INPUT_COUNT * INPUT_WIDTH)-1:0] feature_values;
-    reg [INPUT_COUNT-1:0] weight_bits;
+    wire signed [15:0] sum;
 
-    // Outputs from the module (Wires in testbench)
-    wire signed [ACC_WIDTH-1:0] accumulated_sum;
+    integer pass_count;
+    integer fail_count;
 
-    // Instantiate the Unit Under Test (UUT)
     accumulator #(
         .INPUT_COUNT(INPUT_COUNT),
         .INPUT_WIDTH(INPUT_WIDTH),
         .ACC_WIDTH(ACC_WIDTH)
-    ) uut (
-        .feature_values(feature_values),
-        .weight_bits(weight_bits),
-        .accumulated_sum(accumulated_sum)
+    ) dut (
+        .inputs(inputs),
+        .weights(weights),
+        .sum(sum)
     );
 
+    // ============================================================
+    // Test task
+    // ============================================================
+
+    task run_test;
+        input [127:0] test_inputs;
+        input [15:0]  test_weights;
+        input integer expected;
+
+        begin
+
+            inputs  = test_inputs;
+            weights = test_weights;
+
+            #10;
+
+            if (sum === expected) begin
+
+                $display(
+                    "PASS: inputs=%032h weights=%04h expected=%0d got=%0d",
+                    test_inputs,
+                    test_weights,
+                    expected,
+                    sum
+                );
+
+                pass_count = pass_count + 1;
+
+            end
+            else begin
+
+                $display(
+                    "FAIL: inputs=%032h weights=%04h expected=%0d got=%0d",
+                    test_inputs,
+                    test_weights,
+                    expected,
+                    sum
+                );
+
+                fail_count = fail_count + 1;
+
+            end
+        end
+    endtask
+
+
+    // ============================================================
+    // Tests
+    // ============================================================
+
     initial begin
-        // Initialize Inputs
-        feature_values = 0;
-        weight_bits = 0;
 
-        // Wait 100 ns for global reset to finish
-        #100;
-        
-        // Load features: Feature 2 = 30, Feature 1 = 20, Feature 0 = 10
-        // We concatenate them into a single flat vector
-        feature_values = {8'd30, 8'd20, 8'd10};
+        pass_count = 0;
+        fail_count = 0;
 
-        // ---------------------------------------------------------
-        // Test Case 1: All +1
-        // w[2]=1, w[1]=1, w[0]=1 => (+30) + (+20) + (+10) = 60
-        // ---------------------------------------------------------
-        weight_bits = 3'b111;
-        #10; // Wait 10ns for combinational logic to settle
-        $display("Test 1 (All +1): Weights=%b, Sum=%d | Expected: 60", weight_bits, accumulated_sum);
+        inputs  = 128'd0;
+        weights = 16'd0;
 
-        // ---------------------------------------------------------
-        // Test Case 2: Mixed Weights
-        // w[2]=0, w[1]=1, w[0]=1 => (-30) + (+20) + (+10) = 0
-        // ---------------------------------------------------------
-        weight_bits = 3'b011;
         #10;
-        $display("Test 2 (Mixed) : Weights=%b, Sum=%d | Expected: 0", weight_bits, accumulated_sum);
 
-        // ---------------------------------------------------------
-        // Test Case 3: All -1 (Testing Negative Numbers)
-        // w[2]=0, w[1]=0, w[0]=0 => (-30) + (-20) + (-10) = -60
-        // ---------------------------------------------------------
-        weight_bits = 3'b000;
-        #10;
-        $display("Test 3 (All -1): Weights=%b, Sum=%d | Expected: -60", weight_bits, accumulated_sum);
+        // --------------------------------------------------------
+        // Test 1
+        // All inputs = 1
+        // All weights = +1
+        // Result = 16
+        // --------------------------------------------------------
 
-        // End simulation
-        #10;
+        run_test(
+            128'h01010101010101010101010101010101,
+            16'hFFFF,
+            16
+        );
+
+        // --------------------------------------------------------
+        // Test 2
+        // All inputs = 1
+        // All weights = -1
+        // Result = -16
+        // --------------------------------------------------------
+
+        run_test(
+            128'h01010101010101010101010101010101,
+            16'h0000,
+            -16
+        );
+
+        // --------------------------------------------------------
+        // Test 3
+        // Inputs = 1..16
+        // All +1
+        // Sum = 136
+        // --------------------------------------------------------
+
+        run_test(
+            128'h100F0E0D0C0B0A090807060504030201,
+            16'hFFFF,
+            136
+        );
+
+        // --------------------------------------------------------
+        // Test 4
+        // Inputs = 1..16
+        // All -1
+        // Sum = -136
+        // --------------------------------------------------------
+
+        run_test(
+            128'h100F0E0D0C0B0A090807060504030201,
+            16'h0000,
+            -136
+        );
+
+        // --------------------------------------------------------
+        // Test 5
+        // Alternating +1/-1
+        // Expected = -80
+        // --------------------------------------------------------
+
+        run_test(
+            128'hA0A09696827D6E64503C32281E140A0A,
+            16'hAAAA,
+            55
+        );
+
+        // --------------------------------------------------------
+        // Test 6
+        // Maximum input, all +1
+        // 16 * 255 = 4080
+        // --------------------------------------------------------
+
+        run_test(
+            128'hFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
+            16'hFFFF,
+            4080
+        );
+
+        // --------------------------------------------------------
+        // Test 7
+        // Maximum input, all -1
+        // -16 * 255 = -4080
+        // --------------------------------------------------------
+
+        run_test(
+            128'hFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
+            16'h0000,
+            -4080
+        );
+
+        // --------------------------------------------------------
+        // Test 8
+        // Mixed weights
+        // Expected = -16
+        // --------------------------------------------------------
+
+        run_test(
+            128'h100F0E0D0C0B0A090807060504030201,
+            16'h33CC,
+            0
+        );
+
+        // ========================================================
+        // Final result
+        // ========================================================
+
+        $display("");
+        $display("==============================================");
+        $display("BALANCED ACCUMULATOR TEST RESULT");
+        $display("==============================================");
+
+        $display("PASS = %0d", pass_count);
+        $display("FAIL = %0d", fail_count);
+
+        if (fail_count == 0)
+            $display("BALANCED ACCUMULATOR TEST PASSED");
+        else
+            $display("BALANCED ACCUMULATOR TEST FAILED");
+
+        $display("==============================================");
+
+        #20;
         $finish;
+
     end
 
 endmodule

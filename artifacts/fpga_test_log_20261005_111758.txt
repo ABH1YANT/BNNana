@@ -1,0 +1,6 @@
+FPGA BNN HARDWARE TEST
+==============================================================================
+Dataset: C:\Users\DELL\Desktop\BNNana\datasets\processed\test_fpga.csv
+UART: COM13 @ 115200
+Samples: 10
+

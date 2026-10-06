@@ -1,0 +1,11 @@
+FPGA FULL PC-SIDE DIAGNOSTIC LOG
+==============================================================================
+Dataset: C:\Users\DELL\Desktop\BNNana\datasets\processed\test_fpga.csv
+UART: COM13 @ 115200
+Samples: 10
+
+The current FPGA UART protocol returns only the final classification.
+This file records all PC-side information needed to reproduce a sample:
+24 CSV features, 16 FPGA features, encoded feature bytes, exact 45-byte packet,
+FPGA response and timing.
+==============================================================================

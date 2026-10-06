@@ -1,137 +1,359 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 06/24/2026 01:36:13 AM
-// Design Name: 
-// Module Name: tb_uart_controller
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
 
-
-module tb_uart_controller();
-
-    parameter CLKS_PER_BIT = 868;
-    parameter CLK_PERIOD = 10; 
+module tb_uart_controller;
 
     reg clk;
     reg rst;
-    
-    // Physical Pins
-    reg rx;
-    wire tx;
-    
-    // Internal Signals
-    wire [7:0] rx_data;
-    wire rx_valid;
-    reg [7:0] tx_data;
-    reg tx_start;
-    wire tx_busy;
 
-    // Instantiate the Unit Under Test (UUT)
-    uart_controller #(
-        .CLKS_PER_BIT(CLKS_PER_BIT)
-    ) uut (
+    reg        result_valid;
+    reg        classification;
+
+    wire [7:0] tx_data;
+    wire       tx_start;
+    reg        tx_busy;
+    reg        tx_done;
+
+    wire       busy;
+
+    integer pass_count;
+    integer fail_count;
+
+    uart_controller uut (
         .clk(clk),
         .rst(rst),
-        .rx(rx),
-        .tx(tx),
-        .rx_data(rx_data),
-        .rx_valid(rx_valid),
+
+        .result_valid(result_valid),
+        .classification(classification),
+
         .tx_data(tx_data),
         .tx_start(tx_start),
-        .tx_busy(tx_busy)
+        .tx_busy(tx_busy),
+        .tx_done(tx_done),
+
+        .busy(busy)
     );
 
-    // Generate 100 MHz Clock
-    always #(CLK_PERIOD/2) clk = ~clk;
+    // 10 ns clock
+    always #5 clk = ~clk;
 
-    // PC Simulator: Send Byte Task
-    task send_byte;
-        input [7:0] data;
-        integer i;
+
+    // ============================================================
+    // CHECK TASK
+    // ============================================================
+
+    task check;
+        input condition;
+        input [255:0] message;
+
         begin
-            rx = 1'b0; // Start bit
-            #(CLK_PERIOD * CLKS_PER_BIT);
-            for (i = 0; i < 8; i = i + 1) begin
-                rx = data[i];
-                #(CLK_PERIOD * CLKS_PER_BIT);
+            if (condition) begin
+                $display("%s: PASS", message);
+                pass_count = pass_count + 1;
             end
-            rx = 1'b1; // Stop bit
-            #(CLK_PERIOD * CLKS_PER_BIT);
+            else begin
+                $display("%s: FAIL", message);
+                fail_count = fail_count + 1;
+            end
         end
     endtask
 
-    // PC Simulator: Receive Byte Task
-    reg [7:0] received_byte;
-    task receive_byte;
-        integer i;
+
+    // ============================================================
+    // TEST ONE RESULT
+    // ============================================================
+
+    task test_result;
+
+        input classification_value;
+        input [7:0] expected_data;
+
         begin
-            @(negedge tx); // Wait for start bit
-            #(CLK_PERIOD * (CLKS_PER_BIT / 2)); // Center of start bit
-            #(CLK_PERIOD * CLKS_PER_BIT); // Move to first data bit
-            for (i = 0; i < 8; i = i + 1) begin
-                received_byte[i] = tx;
-                #(CLK_PERIOD * CLKS_PER_BIT);
-            end
-            #(CLK_PERIOD * CLKS_PER_BIT); // Wait for stop bit
+
+            $display("");
+            $display("----------------------------------------------");
+            $display("TEST CLASSIFICATION = %d", classification_value);
+            $display("----------------------------------------------");
+
+            tx_busy = 1'b0;
+            tx_done = 1'b0;
+
+
+            // ----------------------------------------------------
+            // Present inference result
+            // ----------------------------------------------------
+
+            @(negedge clk);
+
+            classification = classification_value;
+            result_valid = 1'b1;
+
+            @(negedge clk);
+
+            result_valid = 1'b0;
+
+
+            // ----------------------------------------------------
+            // Controller captures result.
+            //
+            // IMPORTANT:
+            // tx_start is generated on THIS SAME clock edge
+            // after the controller enters S_SEND.
+            // ----------------------------------------------------
+
+            @(posedge clk);
+            #1;
+
+            check(
+                busy === 1'b1,
+                "Controller BUSY after result"
+            );
+
+            check(
+                tx_data === expected_data,
+                "TX DATA correct"
+            );
+
+            check(
+                tx_start === 1'b1,
+                "TX START asserted"
+            );
+
+
+            // ----------------------------------------------------
+            // UART accepts the request
+            // ----------------------------------------------------
+
+            @(negedge clk);
+
+            tx_busy = 1'b1;
+
+
+            // On this clock controller enters WAIT and
+            // removes the tx_start pulse.
+            @(posedge clk);
+            #1;
+
+            check(
+                tx_start === 1'b0,
+                "TX START deasserted"
+            );
+
+            check(
+                busy === 1'b1,
+                "Controller remains BUSY during TX"
+            );
+
+
+            // ----------------------------------------------------
+            // UART finishes transmission
+            // ----------------------------------------------------
+
+            @(negedge clk);
+
+            tx_busy = 1'b0;
+            tx_done = 1'b1;
+
+            @(posedge clk);
+            #1;
+
+            check(
+                busy === 1'b0,
+                "Controller BUSY cleared after TX DONE"
+            );
+
+
+            // Clear tx_done
+            @(negedge clk);
+
+            tx_done = 1'b0;
+
+            @(posedge clk);
+            #1;
+
+            check(
+                tx_start === 1'b0,
+                "TX START remains idle"
+            );
+
         end
+
     endtask
+
+
+    // ============================================================
+    // MAIN TEST
+    // ============================================================
 
     initial begin
-        // Initialize
-        clk = 0;
-        rst = 1;
-        rx = 1;
-        tx_data = 0;
-        tx_start = 0;
 
-        #100;
-        rst = 0;
-        #100;
+        clk = 1'b0;
+        rst = 1'b1;
 
-        $display("--- Starting UART Controller Loopback Test ---");
+        result_valid = 1'b0;
+        classification = 1'b0;
 
-        $display("PC: Sending 0x88 to FPGA...");
-        
-        // Step 1: PC sends, FPGA receives
-        fork
-            send_byte(8'h88); 
-            begin
-                @(posedge rx_valid); 
-                $display("FPGA: Received 0x%h. Looping it back to PC...", rx_data);
-            end
-        join
+        tx_busy = 1'b0;
+        tx_done = 1'b0;
 
-        // Step 2: Now that the PC is done sending, tell the FPGA to transmit
-        // AND tell the PC to listen at the exact same time.
-        tx_data = rx_data;
-        
-        fork
-            begin
-                tx_start = 1;
-                #CLK_PERIOD;
-                tx_start = 0;
-            end
-            receive_byte(); // PC listens
-        join
+        pass_count = 0;
+        fail_count = 0;
 
-        $display("PC: Received 0x%h back from FPGA | Expected: 0x88", received_byte);
 
-        #1000;
-        $display("--- Simulation Complete ---");
+        // --------------------------------------------------------
+        // RESET
+        // --------------------------------------------------------
+
+        #20;
+
+        @(negedge clk);
+        rst = 1'b0;
+
+
+        // --------------------------------------------------------
+        // TEST 1
+        // classification = 0
+        // --------------------------------------------------------
+
+        test_result(
+            1'b0,
+            8'h00
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 2
+        // classification = 1
+        // --------------------------------------------------------
+
+        test_result(
+            1'b1,
+            8'h01
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 3
+        // Result arrives while TX is already busy
+        // --------------------------------------------------------
+
+        $display("");
+        $display("----------------------------------------------");
+        $display("TEST RESULT WHILE TX BUSY");
+        $display("----------------------------------------------");
+
+        tx_busy = 1'b1;
+        tx_done = 1'b0;
+
+
+        // Send result
+        @(negedge clk);
+
+        classification = 1'b1;
+        result_valid = 1'b1;
+
+        @(negedge clk);
+
+        result_valid = 1'b0;
+
+
+        // Allow controller to capture result
+        @(posedge clk);
+        #1;
+
+        check(
+            busy === 1'b1,
+            "Controller BUSY while waiting for TX"
+        );
+
+        check(
+            tx_data === 8'h01,
+            "TX DATA retained while TX busy"
+        );
+
+        check(
+            tx_start === 1'b0,
+            "TX START waits for TX idle"
+        );
+
+
+        // --------------------------------------------------------
+        // TX becomes idle
+        // --------------------------------------------------------
+
+        @(negedge clk);
+
+        tx_busy = 1'b0;
+
+
+        // Controller should generate tx_start on next clock
+        @(posedge clk);
+        #1;
+
+        check(
+            tx_start === 1'b1,
+            "TX START asserted after TX idle"
+        );
+
+
+        // --------------------------------------------------------
+        // UART accepts request
+        // --------------------------------------------------------
+
+        @(negedge clk);
+
+        tx_busy = 1'b1;
+
+        @(posedge clk);
+        #1;
+
+        check(
+            tx_start === 1'b0,
+            "TX START deasserted"
+        );
+
+
+        // --------------------------------------------------------
+        // Finish transmission
+        // --------------------------------------------------------
+
+        @(negedge clk);
+
+        tx_busy = 1'b0;
+        tx_done = 1'b1;
+
+        @(posedge clk);
+        #1;
+
+        check(
+            busy === 1'b0,
+            "Controller returns IDLE"
+        );
+
+
+        @(negedge clk);
+
+        tx_done = 1'b0;
+
+
+        // --------------------------------------------------------
+        // FINAL RESULT
+        // --------------------------------------------------------
+
+        #20;
+
+        $display("");
+        $display("==============================================");
+        $display("PASS = %0d", pass_count);
+        $display("FAIL = %0d", fail_count);
+        $display("==============================================");
+
+        if (fail_count == 0)
+            $display("UART CONTROLLER TEST PASSED");
+        else
+            $display("UART CONTROLLER TEST FAILED");
+
         $finish;
+
     end
 
 endmodule

@@ -3,7 +3,7 @@
 // Company: 
 // Engineer: 
 // 
-// Create Date: 06/23/2026 01:05:39 AM
+// Create Date: 09/27/2026 12:47:43 PM
 // Design Name: 
 // Module Name: tb_output_layer
 // Project Name: 
@@ -18,74 +18,260 @@
 // Additional Comments:
 // 
 //////////////////////////////////////////////////////////////////////////////////
+`timescale 1ns / 1ps
+
+//////////////////////////////////////////////////////////////////////////////////
+// BNNana
+// Output Layer Testbench
+//
+// 160 binary inputs -> 1 binary output
+//
+// Weight:
+//     F3E67C70AD428AFAB34FCC616F3069A5399D4F3F
+//
+// Threshold:
+//     81
+//////////////////////////////////////////////////////////////////////////////////
+
+module tb_output_layer;
+
+    reg  [159:0] inputs;
+    wire         output_bit;
+
+    integer pass_count;
+    integer fail_count;
 
 
-module tb_output_layer();
+    // ============================================================
+    // DUT
+    // ============================================================
 
-    parameter INPUT_COUNT = 16;
-    parameter INPUT_WIDTH = 1;
-    parameter ACC_WIDTH = 16;
-
-    // Inputs
-    reg [INPUT_COUNT-1:0] hidden_outputs;
-    reg [INPUT_COUNT-1:0] output_weights;
-    reg signed [ACC_WIDTH-1:0] output_threshold;
-
-    // Output
-    wire classification;
-
-    // Instantiate the Unit Under Test (UUT)
-    output_layer #(
-        .INPUT_COUNT(INPUT_COUNT),
-        .INPUT_WIDTH(INPUT_WIDTH),
-        .ACC_WIDTH(ACC_WIDTH)
-    ) uut (
-        .hidden_outputs(hidden_outputs),
-        .output_weights(output_weights),
-        .output_threshold(output_threshold),
-        .classification(classification)
+    output_layer dut (
+        .inputs(inputs),
+        .output_bit(output_bit)
     );
 
+
+    // ============================================================
+    // TEST TASK
+    // ============================================================
+
+    task run_test;
+
+        input [159:0] test_input;
+        input         expected_output;
+        input integer test_number;
+
+        begin
+
+            inputs = test_input;
+
+            #1;
+
+            if (output_bit === expected_output) begin
+
+                $display(
+                    "TEST %0d: PASS  INPUT=%040h  OUTPUT=%b",
+                    test_number,
+                    inputs,
+                    output_bit
+                );
+
+                pass_count = pass_count + 1;
+
+            end
+
+            else begin
+
+                $display(
+                    "TEST %0d: FAIL  INPUT=%040h  EXPECTED=%b  ACTUAL=%b",
+                    test_number,
+                    inputs,
+                    expected_output,
+                    output_bit
+                );
+
+                fail_count = fail_count + 1;
+
+            end
+
+        end
+
+    endtask
+
+
+    // ============================================================
+    // TESTS
+    // ============================================================
+
     initial begin
-        // Initialize Inputs
-        hidden_outputs = 0;
-        output_weights = 0;
-        output_threshold = 0;
 
-        #100;
+        pass_count = 0;
+        fail_count = 0;
 
-        // ---------------------------------------------------------
-        // Test 1: Strong DDoS (Sum = 16, Threshold = 10)
-        // ---------------------------------------------------------
-        hidden_outputs = 16'hFFFF; // All 16 neurons fired (1111111111111111)
-        output_weights = 16'hFFFF; // All weights are +1
-        output_threshold = 16'sd10;
-        
-        #10;
-        $display("Test 1 (Strong DDoS) : Output=%b | Expected: 1", classification);
-
-        // ---------------------------------------------------------
-        // Test 2: Benign Traffic (Sum = 8, Threshold = 10)
-        // ---------------------------------------------------------
-        hidden_outputs = 16'h00FF; // Only 8 neurons fired (0000000011111111)
-        output_weights = 16'hFFFF; // All weights are +1
-        output_threshold = 16'sd10;
-        
-        #10;
-        $display("Test 2 (Benign)      : Output=%b | Expected: 0", classification);
-
-        // ---------------------------------------------------------
-        // Test 3: Negative Weights (Sum = -16, Threshold = -20)
-        // ---------------------------------------------------------
-        hidden_outputs = 16'hFFFF; // All 16 neurons fired
-        output_weights = 16'h0000; // All weights are -1
-        output_threshold = -16'sd20;
-        
-        #10;
-        $display("Test 3 (Negative W)  : Output=%b | Expected: 1", classification);
+        inputs = 160'd0;
 
         #10;
+
+        $display("");
+        $display("============================================================");
+        $display("OUTPUT LAYER TEST");
+        $display("160 INPUTS -> 1 BINARY OUTPUT");
+        $display("============================================================");
+
+
+        // --------------------------------------------------------
+        // TEST 1
+        // Popcount = 72
+        // 72 > 81 = 0
+        // --------------------------------------------------------
+
+        run_test(
+            160'h0000000000000000000000000000000000000000,
+            1'b0,
+            1
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 2
+        // Popcount = 88
+        // 88 > 81 = 1
+        // --------------------------------------------------------
+
+        run_test(
+            160'hFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
+            1'b1,
+            2
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 3
+        // Popcount = 82
+        // 82 > 81 = 1
+        // --------------------------------------------------------
+
+        run_test(
+            160'hAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,
+            1'b1,
+            3
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 4
+        // Popcount = 78
+        // 78 > 81 = 0
+        // --------------------------------------------------------
+
+        run_test(
+            160'h5555555555555555555555555555555555555555,
+            1'b0,
+            4
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 5
+        // Popcount = 81
+        // 81 > 81 = 0
+        // --------------------------------------------------------
+
+        run_test(
+            160'h123456789ABCDEF0123456789ABCDEF012345678,
+            1'b0,
+            5
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 6
+        // Popcount = 87
+        // 87 > 81 = 1
+        // --------------------------------------------------------
+
+        run_test(
+            160'hD50598BC638ADF52947BCC8F3697082F3A86C29C,
+            1'b1,
+            6
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 7
+        // Popcount = 84
+        // 84 > 81 = 1
+        // --------------------------------------------------------
+
+        run_test(
+            160'h5B9232D4365DC077947BCC8F3697082FC8BCB671,
+            1'b1,
+            7
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 8
+        // Popcount = 73
+        // 73 > 81 = 0
+        // --------------------------------------------------------
+
+        run_test(
+            160'h0000000000000000000000000000000000000001,
+            1'b0,
+            8
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 9
+        // Popcount = 84
+        // 84 > 81 = 1
+        // --------------------------------------------------------
+
+        run_test(
+            160'hFEDCBA98765432100123456789ABCDEF3A86C29C,
+            1'b1,
+            9
+        );
+
+
+        // --------------------------------------------------------
+        // TEST 10
+        // Popcount = 76
+        // 76 > 81 = 0
+        // --------------------------------------------------------
+
+        run_test(
+            160'h947BCC8F3697082F3A86C29C07D0909868BD5453,
+            1'b0,
+            10
+        );
+
+
+        // ========================================================
+        // FINAL RESULT
+        // ========================================================
+
+        $display("");
+        $display("============================================================");
+        $display("OUTPUT LAYER VERIFICATION COMPLETE");
+        $display("PASS = %0d", pass_count);
+        $display("FAIL = %0d", fail_count);
+        $display("============================================================");
+
+        if (fail_count == 0)
+            $display("OUTPUT LAYER TEST PASSED");
+        else
+            $display("OUTPUT LAYER TEST FAILED");
+
+        $display("");
+
+        #10;
+
         $finish;
+
     end
 
 endmodule
