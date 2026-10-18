@@ -5,7 +5,7 @@
 //
 // Create Date: 09/14/2026 12:43:10 AM
 // Design Name:
-// Module Name: hidden_layer
+// Module Name: hidden_layer_1
 // Project Name:
 // Target Devices:
 // Tool Versions:
@@ -18,7 +18,7 @@
 //
 //////////////////////////////////////////////////////////////////////////////////
 
-module hidden_layer #(
+module hidden_layer_1 #(
     parameter INPUT_COUNT  = 64,
     parameter OUTPUT_COUNT = 64
 )(

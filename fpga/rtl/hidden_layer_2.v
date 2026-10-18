@@ -5,7 +5,7 @@
 // 
 // Create Date: 09/27/2026 12:32:27 PM
 // Design Name: 
-// Module Name: layer2
+// Module Name: hidden_layer_2
 // Project Name: 
 // Target Devices: 
 // Tool Versions: 
@@ -50,7 +50,7 @@
 //     -> binary output
 //////////////////////////////////////////////////////////////////////////////////
 
-module layer2 #(
+module hidden_layer_2 #(
     parameter INPUT_COUNT  = 128,
     parameter OUTPUT_COUNT = 32
 )(

@@ -3,260 +3,230 @@
 module tb_fpga_top;
 
     // ============================================================
-    // CLOCK / RESET
+    // CONFIGURATION
     // ============================================================
 
-    localparam CLK_FREQ    = 75_000_000;
-    localparam BAUD_RATE   = 115200;
-    localparam CLKS_PER_BIT = 651;
+    localparam CLK_FREQ  = 75_000_000;
+    localparam BAUD_RATE = 115200;
 
-    reg clk;
-    reg rst;
+    localparam real BIT_PERIOD = 1.0e9 / BAUD_RATE;
+
+    // ============================================================
+    // DUT PROBING / INTERNAL WIRES
+    // ============================================================
+
+    reg  clk;
+    reg  rst;
+    reg  uart_rx_drive;
+
+    wire uart_rx_pin;
+    wire uart_tx_pin;
+
+    assign uart_rx_pin = uart_rx_drive;
+    // ============================================================
+    // DUT: TOP-LEVEL INSTANTIATION ONLY
+    //
+    // All internal design modules are instantiated by fpga_top.
+    // ============================================================
+
+    fpga_top #(
+        .CLK_FREQ  (CLK_FREQ),
+        .BAUD_RATE (BAUD_RATE)
+    ) dut (
+        // Primary I/O
+        .clk                  (clk),
+        .rst                  (rst),
+        .uart_rx_pin          (uart_rx_pin),
+        .uart_tx_pin          (uart_tx_pin)
+    );
+
+    // ============================================================
+    // TEST STATUS
+    // ============================================================
+
+    integer byte_count;
+    integer feature_count;
+    integer results_received;
+    integer pass_count;
+    integer fail_count;
+
+    integer sample_number;
+    integer rx_bit;
+
+    reg [7:0] received_result;
+    reg [7:0] expected_result;
+
+    // ============================================================
+    // 100 MHz BOARD CLOCK
+    // ============================================================
 
     initial begin
         clk = 1'b0;
-        forever #6.666666 clk = ~clk;
+        forever #5 clk = ~clk;
     end
 
     // ============================================================
-    // UART PINS
-    // ============================================================
-
-    reg  uart_rx_pin;
-    wire uart_tx_pin;
-
-    // ============================================================
-    // UART RX
-    // ============================================================
-
-    wire [7:0] rx_data;
-    wire       rx_valid;
-    wire       rx_busy;
-
-    uart_rx #(
-        .CLK_FREQ  (CLK_FREQ),
-        .BAUD_RATE (BAUD_RATE)
-    ) uart_rx_inst (
-        .clk      (clk),
-        .rst      (rst),
-        .rx       (uart_rx_pin),
-        .rx_data  (rx_data),
-        .rx_valid (rx_valid),
-        .busy     (rx_busy)
-    );
-
-    // ============================================================
-    // PACKET PARSER
-    // ============================================================
-
-    wire [3:0]  feature_index;
-    wire [26:0] feature_in;
-    wire        feature_valid;
-    wire        packet_done;
-    wire        packet_error;
-
-    packet_parser packet_parser_inst (
-        .clk           (clk),
-        .rst           (rst),
-        .rx_data       (rx_data),
-        .rx_valid      (rx_valid),
-        .feature_index (feature_index),
-        .feature_in    (feature_in),
-        .feature_valid (feature_valid),
-        .packet_done   (packet_done),
-        .packet_error  (packet_error)
-    );
-
-    // ============================================================
-    // FEATURE REGISTER
-    // ============================================================
-
-    wire [277:0] features;
-
-    feature_register feature_register_inst (
-        .clk           (clk),
-        .rst           (rst),
-        .load          (feature_valid),
-        .feature_index (feature_index),
-        .feature_in    (feature_in),
-        .features      (features)
-    );
-
-    // ============================================================
-    // PREPROCESSING
-    // ============================================================
-
-    wire [127:0] preprocessed;
-
-    preprocessing preprocessing_inst (
-        .clk          (clk),
-        .features     (features),
-        .preprocessed (preprocessed)
-    );
-
-    // ============================================================
-    // CONTROLLER
-    // ============================================================
-
-    wire inference_start;
-    wire inference_busy;
-    wire inference_done;
-    wire classification;
-
-    wire controller_busy;
-    wire result_valid;
-
-    // ============================================================
-    // INFERENCE CORE
-    // ============================================================
-
-    inference_core inference_core_inst (
-        .clk            (clk),
-        .rst            (rst),
-        .start          (inference_start),
-        .features       (preprocessed),
-        .classification (classification),
-        .inference_done (inference_done),
-        .busy           (inference_busy)
-    );
-
-    // ============================================================
-    // CONTROLLER FSM
-    // ============================================================
-
-    controller_fsm controller_fsm_inst (
-        .clk             (clk),
-        .rst             (rst),
-        .start           (packet_done),
-        .inference_done  (inference_done),
-        .inference_start (inference_start),
-        .busy            (controller_busy),
-        .result_valid    (result_valid)
-    );
-
-    // ============================================================
-    // UART CONTROLLER
-    // ============================================================
-
-    wire [7:0] tx_data;
-    wire       tx_start;
-    wire       tx_busy;
-    wire       tx_done;
-    wire       uart_controller_busy;
-
-    uart_controller uart_controller_inst (
-        .clk            (clk),
-        .rst            (rst),
-        .result_valid   (result_valid),
-        .classification(classification),
-        .tx_data        (tx_data),
-        .tx_start       (tx_start),
-        .tx_busy        (tx_busy),
-        .tx_done        (tx_done),
-        .busy           (uart_controller_busy)
-    );
-
-    // ============================================================
-    // UART TX
-    // ============================================================
-
-    uart_tx #(
-        .CLK_FREQ  (CLK_FREQ),
-        .BAUD_RATE (BAUD_RATE)
-    ) uart_tx_inst (
-        .clk      (clk),
-        .rst      (rst),
-        .tx_data  (tx_data),
-        .tx_start (tx_start),
-        .tx       (uart_tx_pin),
-        .busy     (tx_busy),
-        .tx_done  (tx_done)
-    );
-
-
-    // ============================================================
-    // RESET
+    // INITIALIZATION
     // ============================================================
 
     initial begin
-        rst         = 1'b1;
-        uart_rx_pin = 1'b1;
 
-        repeat (20) @(posedge clk);
+        rst              = 1'b1;
+        uart_rx_drive    = 1'b1;
 
+        byte_count       = 0;
+        feature_count    = 0;
+        results_received = 0;
+        pass_count       = 0;
+        fail_count       = 0;
+
+        received_result  = 8'h00;
+        expected_result  = 8'h00;
+
+        $display("");
+        $display("======================================================");
+        $display(" BNNANA FPGA FULL-SYSTEM INTEGRATION TEST");
+        $display("======================================================");
+        $display("Board clock : 100 MHz");
+        $display("System clock: 75 MHz");
+        $display("UART baud   : 115200");
+        $display("Samples     : 4");
+        $display("======================================================");
+        $display("");
+
+        #200;
         rst = 1'b0;
 
+        $display("[TB] External reset released.");
+
+        // Wait for the actual Clock Wizard output.
+        wait (dut.clk_locked === 1'b1);
+
+        wait (dut.rst_sys === 1'b0);
+
+        $display("[TB] Clock Wizard locked.");
+        $display("[TB] System reset released.");
+
+        repeat (20) @(posedge dut.clk_sys);
+
+        // --------------------------------------------------------
+        // SAMPLE 1
+        // --------------------------------------------------------
+
+        sample_number = 1;
+        send_sample(1);
+
+        wait (results_received >= 1);
+
+        repeat (20) @(posedge dut.clk_sys);
+
+        // --------------------------------------------------------
+        // SAMPLE 2
+        // --------------------------------------------------------
+
+        sample_number = 2;
+        send_sample(2);
+
+        wait (results_received >= 2);
+
+        repeat (20) @(posedge dut.clk_sys);
+
+        // --------------------------------------------------------
+        // SAMPLE 3
+        // --------------------------------------------------------
+
+        sample_number = 3;
+        send_sample(3);
+
+        wait (results_received >= 3);
+
+        repeat (20) @(posedge dut.clk_sys);
+
+        // --------------------------------------------------------
+        // SAMPLE 4
+        // --------------------------------------------------------
+
+        sample_number = 4;
+        send_sample(4);
+
+        wait (results_received >= 4);
+
+        // Allow final debug messages to print.
+        repeat (20) @(posedge dut.clk_sys);
+
+        // --------------------------------------------------------
+        // FINAL SUMMARY
+        // --------------------------------------------------------
+
         $display("");
-        $display("============================================================");
-        $display(" BNNANA RTL SIMULATION START");
-        $display("============================================================");
-        $display("");
+        $display("======================================================");
+        $display(" FINAL INTEGRATION TEST SUMMARY");
+        $display("======================================================");
+        $display("Packets transmitted : 4");
+        $display("UART results received: %0d", results_received);
+        $display("Correct classifications: %0d", pass_count);
+        $display("Incorrect classifications: %0d", fail_count);
+        $display("Total UART bytes sent: %0d", byte_count);
+        $display("======================================================");
 
-        repeat (20) @(posedge clk);
+        if ((results_received == 4) && (fail_count == 0)) begin
+            $display("[PASS] ALL FOUR SAMPLES CLASSIFIED CORRECTLY.");
+        end
+        else begin
+            $display("[FAIL] INTEGRATION TEST FAILED.");
+        end
 
-        send_packet;
-
-        // Give the complete BNN chain time to finish.
-        repeat (100000) @(posedge clk);
-
-        $display("");
-        $display("============================================================");
-        $display(" SIMULATION TIMEOUT - NO UART RESULT RECEIVED");
-        $display("============================================================");
+        $display("======================================================");
         $display("");
 
         $finish;
-    end
 
+    end
 
     // ============================================================
     // UART BYTE TRANSMITTER
     //
-    // 8-N-1
-    // LSB first
+    // 8-N-1, LSB first.
+    // The FPGA receives this through its real uart_rx_pin.
     // ============================================================
 
     task send_uart_byte;
         input [7:0] data;
+
         integer i;
 
         begin
 
-            // START BIT
-            uart_rx_pin = 1'b0;
+            // Start bit
+            uart_rx_drive = 1'b0;
+            #(BIT_PERIOD);
 
-            repeat (CLKS_PER_BIT)
-                @(posedge clk);
-
-            // DATA BITS
+            // Eight data bits
             for (i = 0; i < 8; i = i + 1) begin
-
-                uart_rx_pin = data[i];
-
-                repeat (CLKS_PER_BIT)
-                    @(posedge clk);
-
+                uart_rx_drive = data[i];
+                #(BIT_PERIOD);
             end
 
-            // STOP BIT
-            uart_rx_pin = 1'b1;
+            // Stop bit
+            uart_rx_drive = 1'b1;
+            #(BIT_PERIOD);
 
-            repeat (CLKS_PER_BIT)
-                @(posedge clk);
+            byte_count = byte_count + 1;
 
             $display(
-                "[TB UART TX] byte = %02h",
+                "[HOST TX] Byte %0d = 0x%02h",
+                byte_count,
                 data
             );
 
         end
     endtask
 
-
     // ============================================================
-    // SEND ONE FEATURE
+    // FEATURE TRANSMITTER
     //
-    // Little endian byte order.
+    // Little-endian byte order.
+    // Sends ceil(width/8) bytes.
     // ============================================================
 
     task send_feature;
@@ -264,631 +234,277 @@ module tb_fpga_top;
         input integer width;
 
         integer i;
-        integer byte_count;
+        integer bytes_required;
+        reg [7:0] next_byte;
 
         begin
 
-            byte_count = (width + 7) / 8;
+            bytes_required = (width + 7) / 8;
 
-            for (i = 0; i < byte_count; i = i + 1) begin
+            for (i = 0; i < bytes_required; i = i + 1) begin
 
-                send_uart_byte(
-                    value[i*8 +: 8]
-                );
+                next_byte = (value >> (i * 8)) & 8'hFF;
+
+                send_uart_byte(next_byte);
 
             end
 
         end
     endtask
 
-
     // ============================================================
-    // TEST PACKET
+    // SEND ONE COMPLETE SAMPLE
     //
-    // These are deterministic test values.
+    // Feature order:
     //
-    // They are NOT being claimed to be a real dataset row.
-    // Their purpose is to exercise every field width.
+    // F0  Bwd Packet Length Max
+    // F1  Min Packet Length
+    // F2  Subflow Bwd Bytes
+    // F3  Total Length of Bwd Packets
+    // F4  Destination Port
+    // F5  min_seg_size_forward
+    // F6  ACK Flag Count
+    // F7  Subflow Bwd Packets
+    // F8  Fwd Packet Length Max
+    // F9  Total Backward Packets
+    // F10 Subflow Fwd Bytes
+    // F11 Max Packet Length
+    // F12 Total Length of Fwd Packets
+    // F13 Bwd Header Length
+    // F14 Flow Duration
+    // F15 Fwd Header Length
+    //
+    // Packet:
+    // 0xAA + feature bytes + 0x55
     // ============================================================
 
-    task send_packet;
+    task send_sample;
+        input integer id;
 
         begin
 
             $display("");
-            $display("------------------------------------------------------------");
-            $display("[TB] Sending packet");
-            $display("------------------------------------------------------------");
+            $display("------------------------------------------------------");
+            $display(" SENDING SAMPLE %0d", id);
+            $display("------------------------------------------------------");
 
-            // HEADER
+            // Header
             send_uart_byte(8'hAA);
 
-            // ----------------------------------------------------
-            // Feature 0
-            // Bwd Packet Length Max
-            // 14 bits
-            // ----------------------------------------------------
+            case (id)
+
+                // =================================================
+                // SAMPLE 1
+                //
+                // CSV Label = 1
+                // =================================================
+
+                1: begin
+
+                    send_feature(27'd0,        14); // F0
+                    send_feature(27'd401,      11); // F1
+                    send_feature(27'd0,        25); // F2
+                    send_feature(27'd0,        25); // F3
+                    send_feature(27'd14677,    16); // F4
+                    send_feature(27'd20,       11); // F5
+                    send_feature(27'd0,         1); // F6
+                    send_feature(27'd0,        17); // F7
+                    send_feature(27'd401,      15); // F8
+                    send_feature(27'd0,        17); // F9
+                    send_feature(27'd802,      21); // F10
+                    send_feature(27'd401,      15); // F11
+                    send_feature(27'd802,      21); // F12
+                    send_feature(27'd0,        21); // F13
+                    send_feature(27'd1,        27); // F14
+                    send_feature(27'd40,       21); // F15
 
-            $display("[TB] F0  = 1234");
-            send_feature(27'd1234, 14);
-
-            // ----------------------------------------------------
-            // Feature 1
-            // Min Packet Length
-            // 11 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F1  = 321");
-            send_feature(27'd321, 11);
-
-            // ----------------------------------------------------
-            // Feature 2
-            // Subflow Bwd Bytes
-            // 25 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F2  = 54321");
-            send_feature(27'd54321, 25);
-
-            // ----------------------------------------------------
-            // Feature 3
-            // Total Length of Bwd Packets
-            // 25 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F3  = 65432");
-            send_feature(27'd65432, 25);
-
-            // ----------------------------------------------------
-            // Feature 4
-            // Destination Port
-            // 16 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F4  = 443");
-            send_feature(27'd443, 16);
-
-            // ----------------------------------------------------
-            // Feature 5
-            // min_seg_size_forward
-            // 11 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F5  = 128");
-            send_feature(27'd128, 11);
-
-            // ----------------------------------------------------
-            // Feature 6
-            // ACK Flag Count
-            // 1 bit
-            // ----------------------------------------------------
-
-            $display("[TB] F6  = 1");
-            send_feature(27'd1, 1);
-
-            // ----------------------------------------------------
-            // Feature 7
-            // Subflow Bwd Packets
-            // 17 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F7  = 12345");
-            send_feature(27'd12345, 17);
-
-            // ----------------------------------------------------
-            // Feature 8
-            // Fwd Packet Length Max
-            // 15 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F8  = 2047");
-            send_feature(27'd2047, 15);
-
-            // ----------------------------------------------------
-            // Feature 9
-            // Total Backward Packets
-            // 17 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F9  = 22222");
-            send_feature(27'd22222, 17);
-
-            // ----------------------------------------------------
-            // Feature 10
-            // Subflow Fwd Bytes
-            // 21 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F10 = 333333");
-            send_feature(27'd333333, 21);
-
-            // ----------------------------------------------------
-            // Feature 11
-            // Max Packet Length
-            // 15 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F11 = 4095");
-            send_feature(27'd4095, 15);
-
-            // ----------------------------------------------------
-            // Feature 12
-            // Total Length of Fwd Packets
-            // 21 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F12 = 444444");
-            send_feature(27'd444444, 21);
-
-            // ----------------------------------------------------
-            // Feature 13
-            // Bwd Header Length
-            // 21 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F13 = 55555");
-            send_feature(27'd55555, 21);
-
-            // ----------------------------------------------------
-            // Feature 14
-            // Flow Duration
-            // 27 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F14 = 12345678");
-            send_feature(27'd12345678, 27);
-
-            // ----------------------------------------------------
-            // Feature 15
-            // Fwd Header Length
-            // 21 bits
-            // ----------------------------------------------------
-
-            $display("[TB] F15 = 66666");
-            send_feature(27'd66666, 21);
-
-            // FOOTER
-            send_uart_byte(8'h55);
-
-            $display("");
-            $display("[TB] Complete 45-byte packet transmitted");
-            $display("");
-
-        end
-
-    endtask
-
-
-    // ============================================================
-    // RECEIVE UART RESULT
-    //
-    // This watches the actual uart_tx output.
-    //
-    // Expected:
-    //
-    // 00 = benign
-    // 01 = DDoS
-    // ============================================================
-
-    reg [7:0] received_result;
-    integer rx_bit;
-
-    initial begin
-
-        wait (rst == 1'b0);
-
-        // Wait until the FPGA actually begins transmitting.
-        @(negedge uart_tx_pin);
-
-        $display("");
-        $display("------------------------------------------------------------");
-        $display("[TB UART RX] FPGA transmission detected");
-        $display("------------------------------------------------------------");
-
-        // We are now at the beginning of the START bit.
-        //
-        // Wait half a bit so we are in the center of the start bit.
-
-        repeat (CLKS_PER_BIT / 2)
-            @(posedge clk);
-
-        if (uart_tx_pin !== 1'b0) begin
-
-            $display(
-                "[ERROR] UART start bit invalid: %b",
-                uart_tx_pin
-            );
-
-            $finish;
-
-        end
-
-        // Move to center of first data bit.
-        repeat (CLKS_PER_BIT)
-            @(posedge clk);
-
-        received_result = 8'd0;
-
-        for (rx_bit = 0; rx_bit < 8; rx_bit = rx_bit + 1) begin
-
-            received_result[rx_bit] = uart_tx_pin;
-
-            repeat (CLKS_PER_BIT)
-                @(posedge clk);
-
-        end
-
-        // Stop bit
-        if (uart_tx_pin !== 1'b1) begin
-
-            $display(
-                "[ERROR] UART stop bit invalid: %b",
-                uart_tx_pin
-            );
-
-        end
-
-        $display("");
-        $display("============================================================");
-        $display(" FPGA UART RESULT = 0x%02h", received_result);
-        $display("============================================================");
-
-        if (received_result == 8'h00) begin
-
-            $display("[RESULT] BENIGN");
-
-        end
-        else if (received_result == 8'h01) begin
-
-            $display("[RESULT] DDOS");
-
-        end
-        else begin
-
-            $display(
-                "[RESULT] ERROR - unexpected value 0x%02h",
-                received_result
-            );
-
-        end
-
-        $display("");
-
-        #1000;
-
-        $finish;
-
-    end
-
-
-    // ============================================================
-    // UART RX DEBUG
-    // ============================================================
-
-    always @(posedge clk) begin
-
-        if (rx_valid) begin
-
-            $display(
-                "[UART RX] received byte = 0x%02h",
-                rx_data
-            );
-
-        end
-
-    end
-
-
-    // ============================================================
-    // PACKET PARSER DEBUG
-    // ============================================================
-
-    always @(posedge clk) begin
-
-        if (feature_valid) begin
-
-            $display(
-                "[PARSER] Feature %0d = %0d (0x%07h)",
-                feature_index,
-                feature_in,
-                feature_in
-            );
-
-        end
-
-        if (packet_done) begin
-
-            $display("");
-            $display(
-                "[PARSER] PACKET DONE"
-            );
-            $display("");
-
-        end
-
-        if (packet_error) begin
-
-            $display("");
-            $display(
-                "[PARSER] *** PACKET ERROR ***"
-            );
-            $display("");
-
-        end
-
-    end
-
-
-    // ============================================================
-    // FEATURE REGISTER DEBUG
-    // ============================================================
-
-    reg [277:0] previous_features;
-
-    initial begin
-        previous_features = 278'd0;
-    end
-
-    always @(posedge clk) begin
-
-        if (features !== previous_features) begin
-
-            $display("");
-            $display(
-                "[FEATURE REGISTER] features = %071h",
-                features
-            );
-
-            previous_features <= features;
-
-        end
-
-    end
-
-
-    // ============================================================
-    // PREPROCESSING DEBUG
-    // ============================================================
-
-    reg [127:0] previous_preprocessed;
-
-    initial begin
-        previous_preprocessed = 128'd0;
-    end
-
-    always @(posedge clk) begin
-
-        if (preprocessed !== previous_preprocessed) begin
-
-            $display("");
-            $display(
-                "[PREPROCESSING] preprocessed = %032h",
-                preprocessed
-            );
-
-            $display(
-                "[PREPROCESSING] q0  = %02h",
-                preprocessing_inst.q0
-            );
-
-            $display(
-                "[PREPROCESSING] q1  = %02h",
-                preprocessing_inst.q1
-            );
-
-            $display(
-                "[PREPROCESSING] q2  = %02h",
-                preprocessing_inst.q2
-            );
-
-            $display(
-                "[PREPROCESSING] q3  = %02h",
-                preprocessing_inst.q3
-            );
-
-            $display(
-                "[PREPROCESSING] q4  = %02h",
-                preprocessing_inst.q4
-            );
-
-            $display(
-                "[PREPROCESSING] q5  = %02h",
-                preprocessing_inst.q5
-            );
-
-            $display(
-                "[PREPROCESSING] q6  = %02h",
-                preprocessing_inst.q6
-            );
-
-            $display(
-                "[PREPROCESSING] q7  = %02h",
-                preprocessing_inst.q7
-            );
-
-            $display(
-                "[PREPROCESSING] q8  = %02h",
-                preprocessing_inst.q8
-            );
-
-            $display(
-                "[PREPROCESSING] q9  = %02h",
-                preprocessing_inst.q9
-            );
-
-            $display(
-                "[PREPROCESSING] q10 = %02h",
-                preprocessing_inst.q10
-            );
-
-            $display(
-                "[PREPROCESSING] q11 = %02h",
-                preprocessing_inst.q11
-            );
-
-            $display(
-                "[PREPROCESSING] q12 = %02h",
-                preprocessing_inst.q12
-            );
-
-            $display(
-                "[PREPROCESSING] q13 = %02h",
-                preprocessing_inst.q13
-            );
-
-            $display(
-                "[PREPROCESSING] q14 = %02h",
-                preprocessing_inst.q14
-            );
-
-            $display(
-                "[PREPROCESSING] q15 = %02h",
-                preprocessing_inst.q15
-            );
-
-            previous_preprocessed <= preprocessed;
-
-        end
-
-    end
-
-
-    // ============================================================
-    // CONTROLLER DEBUG
-    // ============================================================
-
-    reg previous_inference_start;
-    reg previous_inference_done;
-    reg previous_result_valid;
-
-    initial begin
-        previous_inference_start = 1'b0;
-        previous_inference_done  = 1'b0;
-        previous_result_valid    = 1'b0;
-    end
-
-    always @(posedge clk) begin
-
-        if (inference_start && !previous_inference_start) begin
-
-            $display("");
-            $display(
-                "[CONTROLLER] INFERENCE START"
-            );
-
-        end
-
-        // Detect if inference_start stays high.
-        if (inference_start && previous_inference_start) begin
-
-            $display(
-                "[WARNING] inference_start is STILL HIGH"
-            );
-
-        end
-
-        if (inference_done && !previous_inference_done) begin
-
-            $display("");
-            $display(
-                "[INFERENCE] DONE"
-            );
-
-            $display(
-                "[INFERENCE] classification = %b",
-                classification
-            );
-
-            $display("");
-
-        end
-
-        if (result_valid && !previous_result_valid) begin
-
-            $display("");
-            $display(
-                "[CONTROLLER] RESULT VALID"
-            );
-
-            $display(
-                "[CONTROLLER] classification = %b",
-                classification
-            );
-
-            $display("");
-
-        end
-
-        previous_inference_start <= inference_start;
-        previous_inference_done  <= inference_done;
-        previous_result_valid    <= result_valid;
-
-    end
-
-
-    // ============================================================
-    // INFERENCE INTERNAL DEBUG
-    // ============================================================
-
-    reg [2:0] previous_stage;
-
-    initial begin
-        previous_stage = 3'd0;
-    end
-
-    always @(posedge clk) begin
-
-        if (inference_core_inst.stage !== previous_stage) begin
-
-            case (inference_core_inst.stage)
-
-                3'd0:
-                    $display("[INFERENCE] STAGE = IDLE");
-
-                3'd1: begin
-                    $display("[INFERENCE] STAGE = LAYER 0");
-
-                    $display(
-                        "[INFERENCE] preprocessed = %032h",
-                        inference_core_inst.preprocessed_reg
-                    );
                 end
 
-                3'd2: begin
-                    $display("[INFERENCE] STAGE = LAYER 1");
+                // =================================================
+                // SAMPLE 2
+                //
+                // CSV Label = 0
+                // =================================================
 
-                    $display(
-                        "[INFERENCE] layer0 = %016h",
-                        inference_core_inst.layer0_reg
-                    );
+                2: begin
+
+                    send_feature(27'd0,        14); // F0
+                    send_feature(27'd0,        11); // F1
+                    send_feature(27'd0,        25); // F2
+                    send_feature(27'd0,        25); // F3
+                    send_feature(27'd80,       16); // F4
+                    send_feature(27'd32,       11); // F5
+                    send_feature(27'd1,         1); // F6
+                    send_feature(27'd6,        17); // F7
+                    send_feature(27'd0,        15); // F8
+                    send_feature(27'd6,        17); // F9
+                    send_feature(27'd0,        21); // F10
+                    send_feature(27'd0,        15); // F11
+                    send_feature(27'd0,        21); // F12
+                    send_feature(27'd192,      21); // F13
+                    send_feature(27'd54171972, 27); // F14
+                    send_feature(27'd224,      21); // F15
+
                 end
 
-                3'd3: begin
-                    $display("[INFERENCE] STAGE = LAYER 2");
+                // =================================================
+                // SAMPLE 3
+                //
+                // CSV Label = 1
+                // =================================================
 
-                    $display(
-                        "[INFERENCE] layer1 = %016h",
-                        inference_core_inst.layer1_reg
-                    );
+                3: begin
+
+                    send_feature(27'd0,        14); // F0
+                    send_feature(27'd401,      11); // F1
+                    send_feature(27'd0,        25); // F2
+                    send_feature(27'd0,        25); // F3
+                    send_feature(27'd56952,    16); // F4
+                    send_feature(27'd0,        11); // F5
+                    send_feature(27'd0,         1); // F6
+                    send_feature(27'd0,        17); // F7
+                    send_feature(27'd401,      15); // F8
+                    send_feature(27'd0,        17); // F9
+                    send_feature(27'd802,      21); // F10
+                    send_feature(27'd401,      15); // F11
+                    send_feature(27'd802,      21); // F12
+                    send_feature(27'd0,        21); // F13
+                    send_feature(27'd1,        27); // F14
+                    send_feature(27'd0,        21); // F15
+
                 end
 
-                3'd4: begin
-                    $display("[INFERENCE] STAGE = OUTPUT");
+                // =================================================
+                // SAMPLE 4
+                //
+                // CSV Label = 0
+                // =================================================
 
-                    $display(
-                        "[INFERENCE] layer2 = %08h",
-                        inference_core_inst.layer2_reg
-                    );
+                4: begin
+
+                    send_feature(27'd55,       14); // F0
+                    send_feature(27'd39,       11); // F1
+                    send_feature(27'd110,      25); // F2
+                    send_feature(27'd110,      25); // F3
+                    send_feature(27'd53,       16); // F4
+                    send_feature(27'd32,       11); // F5
+                    send_feature(27'd0,         1); // F6
+                    send_feature(27'd2,        17); // F7
+                    send_feature(27'd39,       15); // F8
+                    send_feature(27'd2,        17); // F9
+                    send_feature(27'd78,       21); // F10
+                    send_feature(27'd55,       15); // F11
+                    send_feature(27'd78,       21); // F12
+                    send_feature(27'd64,       21); // F13
+                    send_feature(27'd134120,   27); // F14
+                    send_feature(27'd64,       21); // F15
+
                 end
 
-                default:
-                    $display(
-                        "[INFERENCE] STAGE = UNKNOWN"
-                    );
+                default: begin
+                    $fatal(1, "Invalid sample ID: %0d", id);
+                end
 
             endcase
 
-            previous_stage <= inference_core_inst.stage;
+            // Footer
+            send_uart_byte(8'h55);
+
+            $display(
+                "[TB] Sample %0d packet transmitted.",
+                id
+            );
+
+        end
+    endtask
+
+    // ============================================================
+    // UART RESULT MONITOR
+    //
+    // This monitor runs concurrently with packet transmission.
+    // It can therefore catch an FPGA response even if the FPGA
+    // begins transmitting before send_sample() returns.
+    //
+    // The result is decoded from the actual output pin.
+    // ============================================================
+
+    
+    initial begin
+
+        wait (dut.rst_sys === 1'b0);
+
+        forever begin
+
+            // Detect the falling edge of the UART start bit.
+            @(negedge uart_tx_pin);
+
+            // Check the start bit at its midpoint.
+            #(BIT_PERIOD / 2.0);
+
+            if (uart_tx_pin !== 1'b0) begin
+
+                $display("[ERROR] UART start bit invalid: %b",
+                        uart_tx_pin);
+
+                fail_count = fail_count + 1;
+                results_received = results_received + 1;
+
+            end
+            else begin
+
+                // Advance to the center of data bit 0.
+                #(BIT_PERIOD);
+
+                received_result = 8'h00;
+
+                // Sample 8 data bits, LSB first.
+                for (rx_bit = 0; rx_bit < 8; rx_bit = rx_bit + 1) begin
+
+                    received_result[rx_bit] = uart_tx_pin;
+
+                    #(BIT_PERIOD);
+
+                end
+
+                // We are now at the center of the stop bit.
+                if (uart_tx_pin !== 1'b1)
+                    $display("[ERROR] UART stop bit invalid.");
+
+                // Determine expected result from sample order.
+                case (results_received)
+                    0: expected_result = 8'h01;
+                    1: expected_result = 8'h00;
+                    2: expected_result = 8'h01;
+                    3: expected_result = 8'h00;
+                    default: expected_result = 8'hFF;
+                endcase
+
+                $display("");
+                $display("======================================================");
+                $display("[UART RX] Result for sample %0d",
+                        results_received + 1);
+                $display("[UART RX] Received = 0x%02h", received_result);
+                $display("[UART RX] Expected = 0x%02h", expected_result);
+
+                if (received_result === expected_result) begin
+
+                    $display("[PASS] Classification matches CSV label.");
+                    pass_count = pass_count + 1;
+
+                end
+                else begin
+
+                    $display("[FAIL] Classification differs from CSV label.");
+                    fail_count = fail_count + 1;
+
+                end
+
+                results_received = results_received + 1;
+
+                $display("======================================================");
+                $display("");
+
+            end
 
         end
 
@@ -896,30 +512,113 @@ module tb_fpga_top;
 
 
     // ============================================================
-    // UART CONTROLLER DEBUG
+    // DEBUG MONITOR
+    //
+    // These are hierarchical observations only. The DUT is
+    // still instantiated exclusively through fpga_top.
     // ============================================================
 
-    always @(posedge clk) begin
+    always @(posedge dut.clk_sys) begin
 
-        if (tx_start) begin
+        if (dut.rst_sys === 1'b0) begin
 
-            $display("");
-            $display(
-                "[UART CONTROLLER] TX START, data = 0x%02h",
-                tx_data
-            );
+            if (dut.feature_valid) begin
 
-        end
+                feature_count = feature_count + 1;
 
-        if (tx_done) begin
+                $display(
+                    "[PARSER] Index=%0d Value=%0d",
+                    dut.feature_index,
+                    dut.feature_in
+                );
 
-            $display(
-                "[UART CONTROLLER] TX DONE"
-            );
+            end
+
+            if (dut.packet_parser_inst.packet_error) begin
+
+                $display("[ERROR] Packet parser reported an error.");
+
+            end
+
+            if (dut.packet_done) begin
+
+                $display(
+                    "[PARSER] Packet complete. Feature events=%0d",
+                    feature_count
+                );
+
+            end
+
+            if (dut.inference_start) begin
+
+                $display("[CONTROLLER] Inference start.");
+
+            end
+
+            if (dut.inference_done) begin
+
+                $display(
+                    "[INFERENCE] Done. Classification=%b",
+                    dut.classification
+                );
+
+            end
+
+            if (dut.result_valid) begin
+
+                $display(
+                    "[CONTROLLER] Result valid. Classification=%b",
+                    dut.classification
+                );
+
+            end
+
+            if (dut.tx_start) begin
+
+                $display(
+                    "[UART TX] Start. Data=0x%02h",
+                    dut.tx_data
+                );
+
+            end
 
         end
 
     end
 
+    // ============================================================
+    // GLOBAL WATCHDOG
+    //
+    // Four packets require approximately 15.6 ms of UART
+    // transmission time alone at 115200 baud.
+    // ============================================================
+
+    initial begin
+
+        #100_000_000;
+
+        $display("");
+        $display("======================================================");
+        $display("[FAIL] GLOBAL SIMULATION TIMEOUT");
+        $display("======================================================");
+        $display("Clock locked       = %b", dut.clk_locked);
+        $display("System reset       = %b", dut.rst_sys);
+        $display("Packet done        = %b", dut.packet_done);
+        $display("Packet error       = %b", dut.packet_error);
+        $display("Inference start    = %b", dut.inference_start);
+        $display("Inference busy     = %b", dut.inference_busy);
+        $display("Inference done     = %b", dut.inference_done);
+        $display("Classification     = %b", dut.classification);
+        $display("Result valid       = %b", dut.result_valid);
+        $display("UART TX busy       = %b", dut.tx_busy);
+        $display("UART TX pin        = %b", uart_tx_pin);
+        $display("Bytes sent         = %0d", byte_count);
+        $display("Feature events     = %0d", feature_count);
+        $display("Results received   = %0d", results_received);
+        $display("======================================================");
+
+        $fatal(1, "Integration test timed out.");
+
+    end
 
 endmodule

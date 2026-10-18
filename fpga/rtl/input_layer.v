@@ -5,7 +5,7 @@
 //
 // Create Date: 09/13/2026 11:49:35 PM
 // Design Name:
-// Module Name: layer0
+// Module Name: input_layer
 // Project Name:
 // Target Devices:
 // Tool Versions:
@@ -18,7 +18,7 @@
 //
 //////////////////////////////////////////////////////////////////////////////////
 
-module layer0 #(
+module input_layer #(
     parameter INPUT_COUNT  = 16,
     parameter OUTPUT_COUNT = 64,
     parameter INPUT_WIDTH  = 8,

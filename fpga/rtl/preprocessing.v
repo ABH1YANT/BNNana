@@ -188,7 +188,7 @@ module preprocessing (
     //
     // This is the important new pipeline boundary.
     //
-    // BRAM -> q registers -> output registers -> Layer0
+    // BRAM -> q registers -> output registers -> input_layer
     // ============================================================
 
     (* DONT_TOUCH = "TRUE" *)

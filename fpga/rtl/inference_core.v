@@ -20,13 +20,13 @@ module inference_core (
     reg [127:0] preprocessed_reg;
 
     // Stage 1: Layer 0 output
-    reg [63:0] layer0_reg;
+    reg [63:0] input_layer_reg;
 
     // Stage 2: Layer 1 output
-    reg [63:0] layer1_reg;
+    reg [63:0] hidden_layer_1_reg;
 
     // Stage 3: Layer 2 output
-    reg [31:0] layer2_reg;
+    reg [31:0] hidden_layer_2_reg;
 
     // Final result
     reg classification_reg;
@@ -36,10 +36,10 @@ module inference_core (
     // Combinational layer outputs
     // ============================================================
 
-    wire [63:0]  layer0_comb;
-    wire [63:0]  layer1_comb;
-    wire [127:0] layer2_input;
-    wire [31:0]  layer2_comb;
+    wire [63:0]  input_layer_comb;
+    wire [63:0]  hidden_layer_1_comb;
+    wire [127:0] hidden_layer_2_input;
+    wire [31:0]  hidden_layer_2_comb;
     wire [159:0] output_input;
     wire         output_comb;
 
@@ -68,20 +68,20 @@ module inference_core (
         end
     endfunction
 
-    wire [63:0] layer0_for_layer2;
-    wire [63:0] layer1_for_layer2;
+    wire [63:0] input_layer_for_hidden_layer_2;
+    wire [63:0] hidden_layer_1_for_hidden_layer_2;
 
-    assign layer0_for_layer2 = reverse64(layer0_reg);
-    assign layer1_for_layer2 = reverse64(layer1_reg);
+    assign input_layer_for_hidden_layer_2 = reverse64(input_layer_reg);
+    assign hidden_layer_1_for_hidden_layer_2 = reverse64(hidden_layer_1_reg);
 
 
     // ============================================================
     // Layer 0
     // ============================================================
 
-    layer0 layer0_inst (
+    input_layer input_layer_inst (
         .inputs(preprocessed_reg),
-        .outputs(layer0_comb)
+        .outputs(input_layer_comb)
     );
 
 
@@ -89,9 +89,9 @@ module inference_core (
     // Layer 1
     // ============================================================
 
-    hidden_layer hidden_layer_inst (
-        .inputs(layer0_reg),
-        .outputs(layer1_comb)
+    hidden_layer_1 hidden_layer_1_inst (
+        .inputs(input_layer_reg),
+        .outputs(hidden_layer_1_comb)
     );
 
 
@@ -106,14 +106,14 @@ module inference_core (
     // the Python-exported weight bit ordering is preserved.
     // ============================================================
 
-    assign layer2_input = {
-        layer0_for_layer2,
-        layer1_for_layer2
+    assign hidden_layer_2_input = {
+        input_layer_for_hidden_layer_2,
+        hidden_layer_1_for_hidden_layer_2
     };
 
-    layer2 layer2_inst (
-        .inputs(layer2_input),
-        .outputs(layer2_comb)
+    hidden_layer_2 hidden_layer_2_inst (
+        .inputs(hidden_layer_2_input),
+        .outputs(hidden_layer_2_comb)
     );
 
 
@@ -126,9 +126,9 @@ module inference_core (
     // ============================================================
 
     assign output_input = {
-        layer0_reg,
-        layer1_reg,
-        layer2_reg
+        input_layer_reg,
+        hidden_layer_1_reg,
+        hidden_layer_2_reg
     };
 
     output_layer output_layer_inst (
@@ -160,9 +160,9 @@ module inference_core (
         if (rst) begin
 
             preprocessed_reg <= 128'd0;
-            layer0_reg       <= 64'd0;
-            layer1_reg       <= 64'd0;
-            layer2_reg       <= 32'd0;
+            input_layer_reg       <= 64'd0;
+            hidden_layer_1_reg       <= 64'd0;
+            hidden_layer_2_reg       <= 32'd0;
 
             classification_reg <= 1'b0;
 
@@ -206,7 +206,7 @@ module inference_core (
 
             else if (busy && stage == STAGE_L0) begin
 
-                layer0_reg <= layer0_comb;
+                input_layer_reg <= input_layer_comb;
 
                 stage <= STAGE_L1;
             end
@@ -219,7 +219,7 @@ module inference_core (
 
             else if (busy && stage == STAGE_L1) begin
 
-                layer1_reg <= layer1_comb;
+                hidden_layer_1_reg <= hidden_layer_1_comb;
 
                 stage <= STAGE_L2;
             end
@@ -232,7 +232,7 @@ module inference_core (
 
             else if (busy && stage == STAGE_L2) begin
 
-                layer2_reg <= layer2_comb;
+                hidden_layer_2_reg <= hidden_layer_2_comb;
 
                 stage <= STAGE_OUTPUT;
             end

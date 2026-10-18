@@ -11,6 +11,63 @@ module fpga_top #(
 );
 
     // ============================================================
+    // INTERNAL WIRE & SIGNAL DECLARATIONS
+    // ============================================================
+
+    // Clock and Reset
+    wire        clk_sys;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        clk_locked;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        rst_sys;
+
+    // UART RX
+    wire [7:0]  rx_data;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        rx_valid;
+    wire        rx_busy;
+
+    // Packet Parser
+    wire [3:0]  feature_index;
+    wire [26:0] feature_in;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        feature_valid;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        packet_done;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        packet_error;
+
+    // Feature Register
+    wire [277:0] features;
+
+    // Preprocessing
+    wire [127:0] preprocessed;
+
+    // Inference Core
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        inference_start;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        inference_busy;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        inference_done;
+    wire        classification;
+
+    // Controller FSM
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        result_valid;
+    wire        controller_busy;
+
+    // UART Controller & TX
+    wire [7:0]  tx_data;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        tx_start;
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire        tx_busy;
+    wire        tx_done;
+    wire        uart_controller_busy;
+
+
+    // ============================================================
     // CLOCK WIZARD
     //
     // Board input clock:
@@ -19,11 +76,6 @@ module fpga_top #(
     // Generated system clock:
     //     75 MHz
     // ============================================================
-
-    wire clk_sys;
-
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire clk_locked;
 
     clk_wiz_0 clk_wiz_inst (
         .clk_in1  (clk),
@@ -41,22 +93,12 @@ module fpga_top #(
     //     clk_locked = 1
     // ============================================================
 
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire rst_sys;
-
     assign rst_sys = rst | ~clk_locked;
 
 
     // ============================================================
     // UART RX
     // ============================================================
-
-    wire [7:0] rx_data;
-
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire rx_valid;
-
-    wire rx_busy;
 
     uart_rx #(
         .CLK_FREQ  (CLK_FREQ),
@@ -75,17 +117,6 @@ module fpga_top #(
     // PACKET PARSER
     // ============================================================
 
-    wire [3:0]  feature_index;
-    wire [26:0] feature_in;
-
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire feature_valid;
-
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire packet_done;
-
-    wire packet_error;
-
     packet_parser packet_parser_inst (
         .clk           (clk_sys),
         .rst           (rst_sys),
@@ -102,8 +133,6 @@ module fpga_top #(
     // ============================================================
     // FEATURE REGISTER
     // ============================================================
-
-    wire [277:0] features;
 
     feature_register feature_register_inst (
         .clk           (clk_sys),
@@ -125,8 +154,6 @@ module fpga_top #(
     // preprocessed
     // ============================================================
 
-    wire [127:0] preprocessed;
-
     preprocessing preprocessing_inst (
         .clk          (clk_sys),
         .features     (features),
@@ -137,16 +164,6 @@ module fpga_top #(
     // ============================================================
     // INFERENCE CORE
     // ============================================================
-
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire inference_start;
-
-    wire inference_busy;
-
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire inference_done;
-
-    wire classification;
 
     inference_core inference_core_inst (
         .clk             (clk_sys),
@@ -163,15 +180,10 @@ module fpga_top #(
     // CONTROLLER FSM
     // ============================================================
 
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire result_valid;
-
     // IMPORTANT:
     // This is separate from inference_busy.
     // controller_fsm and inference_core each drive their own
     // busy output.
-
-    wire controller_busy;
 
     controller_fsm controller_fsm_inst (
         .clk             (clk_sys),
@@ -187,18 +199,6 @@ module fpga_top #(
     // ============================================================
     // UART CONTROLLER
     // ============================================================
-
-    wire [7:0] tx_data;
-
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire tx_start;
-
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire tx_busy;
-
-    wire tx_done;
-
-    wire uart_controller_busy;
 
     uart_controller uart_controller_inst (
         .clk             (clk_sys),
