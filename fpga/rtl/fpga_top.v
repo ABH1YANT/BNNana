@@ -16,6 +16,7 @@ module fpga_top #(
 
     // Clock and Reset
     wire        clk_sys;
+    wire        rst_active;
     (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
     wire        clk_locked;
     (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
@@ -77,23 +78,20 @@ module fpga_top #(
     //     75 MHz
     // ============================================================
 
+    // Nexys A7 CPU_RESETN is active-low.
+    // rst = 1 when button released, rst = 0 when pressed.
+    assign rst_active = ~rst;
+
     clk_wiz_0 clk_wiz_inst (
         .clk_in1  (clk),
-        .reset    (rst),
+        .reset    (rst_active),
         .clk_out1 (clk_sys),
         .locked   (clk_locked)
     );
 
-
-    // ============================================================
-    // SYSTEM RESET
-    //
-    // The system remains in reset until:
-    //     rst = 0
-    //     clk_locked = 1
-    // ============================================================
-
-    assign rst_sys = rst | ~clk_locked;
+    // Hold the system in reset while the button is pressed
+    // or until the clock wizard locks.
+    assign rst_sys = rst_active | ~clk_locked;
 
 
     // ============================================================

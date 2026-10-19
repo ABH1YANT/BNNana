@@ -12,7 +12,7 @@ Install dependency:
     py -m pip install pyserial
 
 Example:
-    py test_fpga_101_samples.py --port COM11
+    py test_fpga_101_samples.py --port COM13
 
 This script uses the first 101 rows by default. It does not shuffle the
 dataset. The CSV must contain a Label column and all features listed in
@@ -29,11 +29,11 @@ import pandas as pd
 import serial
 
 
-DEFAULT_DATASET = r"C:\Users\a\Desktop\BNNana\datasets\processed\master_dataset.csv"
-DEFAULT_SELECTED_FEATURES = r"C:\Users\a\Desktop\BNNana\artifacts\selected_features.json"
-DEFAULT_PORT = "COM11"
+DEFAULT_DATASET = r"C:\Users\Dell\Desktop\BNNana\datasets\processed\master_dataset.csv"
+DEFAULT_SELECTED_FEATURES = r"C:\Users\Dell\Desktop\BNNana\artifacts\selected_features.json"
+DEFAULT_PORT = "COM13"
 DEFAULT_BAUD = 115200
-DEFAULT_SAMPLES = 101
+DEFAULT_SAMPLES = 10000
 DEFAULT_TIMEOUT = 2.0
 
 # Exact order, widths, and byte lengths expected by the current packet_parser.v.
@@ -173,12 +173,12 @@ def main():
     parser.add_argument("--port", default=DEFAULT_PORT, help="Serial port, e.g. COM11")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help="UART baud rate")
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLES,
-                        help="Number of sequential dataset rows to send (default: 101)")
+                        help="Number of sequential dataset rows to send (default: 10000)")
     parser.add_argument("--start-row", type=int, default=0,
                         help="Zero-based row index to start from (default: 0)")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
                         help="Seconds to wait for each FPGA result")
-    parser.add_argument("--output", default="fpga_101_sample_results.csv",
+    parser.add_argument("--output", default="fpga_10000_sample_results.csv",
                         help="Output CSV for per-sample results")
     args = parser.parse_args()
 
