@@ -1,0 +1,86 @@
+BNNana ESP32 MCU TEST RESULTS
+============================================================
+
+TEST CONFIGURATION
+------------------------------------------------------------
+Started: 2026-10-24T12:40:10.771796+05:30
+Finished: 2026-10-24T12:43:12.155055+05:30
+Dataset: C:\Users\DELL\Desktop\BNNana\datasets\processed\master_dataset.csv
+Serial port: COM4
+Baud rate: 115200
+Features per packet: 16
+Rows requested: 10000
+Rows processed: 10000
+Response timeout: 5 seconds
+
+CLASSIFICATION RESULTS
+------------------------------------------------------------
+Valid predictions: 10000
+Correct predictions: 9846
+Incorrect predictions: 154
+Rows without valid predictions: 0
+Accuracy among valid predictions: 98.4600%
+Accuracy over all requested rows: 98.4600%
+Precision (class 1): 97.1977%
+Recall (class 1): 99.7787%
+Specificity (class 0): 97.1565%
+F1 score (class 1): 98.4713%
+
+CONFUSION MATRIX (VALID PREDICTIONS ONLY)
+------------------------------------------------------------
+                 Predicted 0    Predicted 1
+Actual 0 (TN/FP)         4886             143
+Actual 1 (FN/TP)           11            4960
+
+TIMING RESULTS
+------------------------------------------------------------
+Timing measures PC-to-ESP32 serial round-trip latency.
+It includes packet transmission, ESP32 preprocessing/inference,
+and the response transmission. It is not inference-only timing.
+Total elapsed time: 181.375 seconds
+Mean latency per row: 17.839 ms
+Mean latency for valid predictions: 17.839 ms
+Median latency (P50): 11.645 ms
+95th percentile latency (P95): 52.126 ms
+99th percentile latency (P99): 52.431 ms
+Minimum latency: 9.151 ms
+Maximum latency: 63.836 ms
+Throughput: 55.134 rows/second
+
+SERIAL / FIRMWARE ERRORS
+------------------------------------------------------------
+Total errors or invalid responses: 0
+No serial errors, timeouts, or invalid responses.
+
+FEATURE ORDER USED
+------------------------------------------------------------
+01. Bwd Packet Length Max
+02. Min Packet Length
+03. Subflow Bwd Bytes
+04. Total Length of Bwd Packets
+05. Destination Port
+06. min_seg_size_forward
+07. ACK Flag Count
+08. Subflow Bwd Packets
+09. Fwd Packet Length Max
+10. Total Backward Packets
+11. Subflow Fwd Bytes
+12. Max Packet Length
+13. Total Length of Fwd Packets
+14. Bwd Header Length
+15. Flow Duration
+16. Fwd Header Length
+
+OUTPUT FILES
+------------------------------------------------------------
+Per-row detailed results: C:\Users\DELL\Desktop\BNNana\reports\mcu_test_results.csv
+Summary report: C:\Users\DELL\Desktop\BNNana\reports\mcu_test_results_summary.txt
+
+INTERPRETATION NOTES
+------------------------------------------------------------
+Accuracy is calculated against the CSV Label column.
+A high dataset accuracy alone does not prove that the ESP32
+matches the original PyTorch model. Compare predictions from
+both implementations on identical inputs to validate parity.
+The dataset rows may not be independent of training data.
+Check the dataset split before claiming generalization.
