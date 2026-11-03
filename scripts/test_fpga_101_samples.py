@@ -31,7 +31,7 @@ import serial
 
 DEFAULT_DATASET = r"C:\Users\Dell\Desktop\BNNana\datasets\processed\master_dataset.csv"
 DEFAULT_SELECTED_FEATURES = r"C:\Users\Dell\Desktop\BNNana\artifacts\selected_features.json"
-DEFAULT_PORT = "COM13"
+DEFAULT_PORT = "COM16"
 DEFAULT_BAUD = 115200
 DEFAULT_SAMPLES = 10000
 DEFAULT_TIMEOUT = 2.0

@@ -8,7 +8,16 @@ module inference_core (
 
     output wire        classification,
     output reg         inference_done,
-    output reg         busy
+    output reg         busy,
+
+    // Debug outputs for ILA
+    output wire [2:0]  debug_stage,
+    output wire [31:0] input_layer_cycles,
+    output wire [31:0] hidden_layer_1_cycles,
+    output wire [31:0] hidden_layer_2_cycles,
+    output wire [31:0] output_layer_cycles,
+    output wire [31:0] inference_cycle_count,
+    output wire [31:0] total_inference_cycles
 );
 
     // ============================================================
@@ -31,6 +40,48 @@ module inference_core (
     // Final result
     reg classification_reg;
 
+    reg [2:0] stage;
+    reg       start_seen;
+
+    // ============================================================
+    // DEBUG CYCLE COUNTERS
+    // ============================================================
+
+    (* MARK_DEBUG = "TRUE" *)
+    reg [31:0] input_layer_cycles_reg;
+
+    (* MARK_DEBUG = "TRUE" *)
+    reg [31:0] hidden_layer_1_cycles_reg;
+
+    (* MARK_DEBUG = "TRUE" *)
+    reg [31:0] hidden_layer_2_cycles_reg;
+
+    (* MARK_DEBUG = "TRUE" *)
+    reg [31:0] output_layer_cycles_reg;
+
+    (* MARK_DEBUG = "TRUE" *)
+    reg [31:0] inference_cycle_count_reg;
+
+    (* MARK_DEBUG = "TRUE" *)
+    reg [31:0] total_inference_cycles_reg;
+
+
+    // Expose the existing stage register
+    assign debug_stage = stage;
+
+
+    // Connect internal counters to module outputs
+    assign input_layer_cycles = input_layer_cycles_reg;
+
+    assign hidden_layer_1_cycles = hidden_layer_1_cycles_reg;
+
+    assign hidden_layer_2_cycles = hidden_layer_2_cycles_reg;
+
+    assign output_layer_cycles = output_layer_cycles_reg;
+
+    assign inference_cycle_count = inference_cycle_count_reg;
+
+    assign total_inference_cycles = total_inference_cycles_reg;
 
     // ============================================================
     // Combinational layer outputs
@@ -42,6 +93,8 @@ module inference_core (
     wire [31:0]  hidden_layer_2_comb;
     wire [159:0] output_input;
     wire         output_comb;
+    wire hidden_layer_2_done;
+    reg  hidden_layer_2_start;
 
 
     // ============================================================
@@ -112,8 +165,12 @@ module inference_core (
     };
 
     hidden_layer_2 hidden_layer_2_inst (
-        .inputs(hidden_layer_2_input),
-        .outputs(hidden_layer_2_comb)
+        .clk     (clk),
+        .rst     (rst),
+        .start   (hidden_layer_2_start),
+        .inputs  (hidden_layer_2_input),
+        .outputs(hidden_layer_2_comb),
+        .done    (hidden_layer_2_done)
     );
 
 
@@ -147,45 +204,49 @@ module inference_core (
     localparam STAGE_L2     = 3'd3;
     localparam STAGE_OUTPUT = 3'd4;
 
-    reg [2:0] stage;
-    reg       start_seen;
-
 
     // ============================================================
-    // Sequential pipeline
+    // SEQUENTIAL PIPELINE + DEBUG CYCLE COUNTERS
     // ============================================================
 
+        
     always @(posedge clk) begin
 
         if (rst) begin
 
-            preprocessed_reg <= 128'd0;
-            input_layer_reg       <= 64'd0;
-            hidden_layer_1_reg       <= 64'd0;
-            hidden_layer_2_reg       <= 32'd0;
+            preprocessed_reg    <= 128'd0;
+            input_layer_reg     <= 64'd0;
+            hidden_layer_1_reg  <= 64'd0;
+            hidden_layer_2_reg  <= 32'd0;
 
-            classification_reg <= 1'b0;
+            classification_reg  <= 1'b0;
 
-            stage          <= STAGE_IDLE;
-            start_seen     <= 1'b0;
-            busy           <= 1'b0;
-            inference_done <= 1'b0;
+            stage               <= STAGE_IDLE;
+            start_seen          <= 1'b0;
+            hidden_layer_2_start <= 1'b0;
+
+            busy                <= 1'b0;
+            inference_done      <= 1'b0;
+
+            input_layer_cycles_reg     <= 32'd0;
+            hidden_layer_1_cycles_reg  <= 32'd0;
+            hidden_layer_2_cycles_reg  <= 32'd0;
+            output_layer_cycles_reg    <= 32'd0;
+
+            inference_cycle_count_reg  <= 32'd0;
+            total_inference_cycles_reg <= 32'd0;
 
         end
         else begin
 
-            // Default: done is a one-cycle pulse
-            inference_done <= 1'b0;
+            inference_done       <= 1'b0;
+            hidden_layer_2_start <= 1'b0;
 
-
-            // Allow a new start after start has been released
             if (!start)
                 start_seen <= 1'b0;
 
-
             // ----------------------------------------------------
-            // Stage 0
-            // Capture preprocessing result
+            // START: Capture preprocessed features
             // ----------------------------------------------------
 
             if (start && !start_seen && !busy) begin
@@ -196,61 +257,101 @@ module inference_core (
                 start_seen <= 1'b1;
 
                 stage <= STAGE_L0;
+
+                input_layer_cycles_reg     <= 32'd0;
+                hidden_layer_1_cycles_reg  <= 32'd0;
+                hidden_layer_2_cycles_reg  <= 32'd0;
+                output_layer_cycles_reg    <= 32'd0;
+
+                inference_cycle_count_reg  <= 32'd0;
+                total_inference_cycles_reg <= 32'd0;
+
             end
 
-
             // ----------------------------------------------------
-            // Stage 1
-            // Layer 0 computation
+            // STAGE 1: Input layer
             // ----------------------------------------------------
 
             else if (busy && stage == STAGE_L0) begin
 
                 input_layer_reg <= input_layer_comb;
 
+                input_layer_cycles_reg <=
+                    input_layer_cycles_reg + 1'b1;
+
+                inference_cycle_count_reg <=
+                    inference_cycle_count_reg + 1'b1;
+
                 stage <= STAGE_L1;
+
             end
 
-
             // ----------------------------------------------------
-            // Stage 2
-            // Layer 1 computation
+            // STAGE 2: Hidden layer 1
             // ----------------------------------------------------
 
             else if (busy && stage == STAGE_L1) begin
 
                 hidden_layer_1_reg <= hidden_layer_1_comb;
 
+                hidden_layer_1_cycles_reg <=
+                    hidden_layer_1_cycles_reg + 1'b1;
+
+                inference_cycle_count_reg <=
+                    inference_cycle_count_reg + 1'b1;
+
+                // Start hidden layer 2 exactly once.
+                hidden_layer_2_start <= 1'b1;
+
                 stage <= STAGE_L2;
+
             end
 
-
             // ----------------------------------------------------
-            // Stage 3
-            // Layer 2 computation
+            // STAGE 3: Pipelined hidden layer 2
             // ----------------------------------------------------
 
             else if (busy && stage == STAGE_L2) begin
 
-                hidden_layer_2_reg <= hidden_layer_2_comb;
+                hidden_layer_2_cycles_reg <=
+                    hidden_layer_2_cycles_reg + 1'b1;
 
-                stage <= STAGE_OUTPUT;
+                inference_cycle_count_reg <=
+                    inference_cycle_count_reg + 1'b1;
+
+                // Wait until the registered layer output is ready.
+                if (hidden_layer_2_done) begin
+
+                    hidden_layer_2_reg <= hidden_layer_2_comb;
+
+                    stage <= STAGE_OUTPUT;
+
+                end
+
             end
 
-
             // ----------------------------------------------------
-            // Stage 4
-            // Final output computation
+            // STAGE 4: Output layer
             // ----------------------------------------------------
 
             else if (busy && stage == STAGE_OUTPUT) begin
 
                 classification_reg <= output_comb;
 
+                output_layer_cycles_reg <=
+                    output_layer_cycles_reg + 1'b1;
+
+                inference_cycle_count_reg <=
+                    inference_cycle_count_reg + 1'b1;
+
+                total_inference_cycles_reg <=
+                    inference_cycle_count_reg + 1'b1;
+
                 busy           <= 1'b0;
                 inference_done <= 1'b1;
 
                 stage <= STAGE_IDLE;
+
             end
 
         end

@@ -45,13 +45,46 @@ module fpga_top #(
     wire [127:0] preprocessed;
 
     // Inference Core
+    // ============================================================
+    // INFERENCE CORE
+    // ============================================================
+
     (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire        inference_start;
+    wire inference_start;
+
     (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire        inference_busy;
+    wire inference_busy;
+
     (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire        inference_done;
-    wire        classification;
+    wire inference_done;
+
+    wire classification;
+
+
+    // ============================================================
+    // DEBUG: INFERENCE CYCLE COUNTERS
+    // ============================================================
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire [2:0] debug_stage;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire [31:0] input_layer_cycles;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire [31:0] hidden_layer_1_cycles;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire [31:0] hidden_layer_2_cycles;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire [31:0] output_layer_cycles;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire [31:0] inference_cycle_count;
+
+    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
+    wire [31:0] total_inference_cycles;
 
     // Controller FSM
     (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
@@ -164,13 +197,23 @@ module fpga_top #(
     // ============================================================
 
     inference_core inference_core_inst (
-        .clk             (clk_sys),
-        .rst             (rst_sys),
-        .start           (inference_start),
-        .features        (preprocessed),
-        .classification  (classification),
-        .inference_done  (inference_done),
-        .busy            (inference_busy)
+        .clk                     (clk_sys),
+        .rst                     (rst_sys),
+        .start                   (inference_start),
+        .features                (preprocessed),
+
+        .classification          (classification),
+        .inference_done          (inference_done),
+        .busy                    (inference_busy),
+
+        // Debug outputs
+        .debug_stage             (debug_stage),
+        .input_layer_cycles      (input_layer_cycles),
+        .hidden_layer_1_cycles   (hidden_layer_1_cycles),
+        .hidden_layer_2_cycles   (hidden_layer_2_cycles),
+        .output_layer_cycles     (output_layer_cycles),
+        .inference_cycle_count   (inference_cycle_count),
+        .total_inference_cycles  (total_inference_cycles)
     );
 
 

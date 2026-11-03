@@ -71,7 +71,10 @@ module tb_fpga_top;
 
     initial begin
 
-        rst              = 1'b1;
+        // Force all %t timestamps to display in nanoseconds.
+        $timeformat(-9, 3, " ns", 12);
+
+        rst              = 1'b0;
         uart_rx_drive    = 1'b1;
 
         byte_count       = 0;
@@ -95,7 +98,7 @@ module tb_fpga_top;
         $display("");
 
         #200;
-        rst = 1'b0;
+        rst = 1'b1;
 
         $display("[TB] External reset released.");
 
@@ -173,7 +176,7 @@ module tb_fpga_top;
             $display("[PASS] ALL FOUR SAMPLES CLASSIFIED CORRECTLY.");
         end
         else begin
-            $display("[FAIL] INTEGRATION TEST FAILED.");
+            $fatal(1, "[FAIL] INTEGRATION TEST FAILED.");
         end
 
         $display("======================================================");
@@ -505,6 +508,256 @@ module tb_fpga_top;
                 $display("");
 
             end
+
+        end
+
+    end
+
+    
+    // ============================================================
+    // PREPROCESSING VERIFICATION AND TIMING MONITOR
+    // Testbench only. Do not modify preprocessing.v.
+    // ============================================================
+
+    integer prep_cycle;
+    integer prep_sample_count;
+    integer prep_i;
+
+    realtime prep_start_time;
+    realtime prep_lookup_time;
+    realtime prep_output_time;
+
+    reg prep_active;
+    reg prep_lookup_seen;
+    reg prep_output_seen;
+
+    reg [277:0] prep_features_snapshot;
+    reg [127:0] prep_expected;
+
+    initial begin
+        prep_cycle           = 0;
+        prep_sample_count    = 0;
+        prep_start_time      = 0.0;
+        prep_lookup_time     = 0.0;
+        prep_output_time     = 0.0;
+        prep_active          = 1'b0;
+        prep_lookup_seen     = 1'b0;
+        prep_output_seen     = 1'b0;
+        prep_features_snapshot = 278'd0;
+        prep_expected        = 128'd0;
+    end
+
+    always @(posedge dut.clk_sys) begin
+        if (dut.rst_sys) begin
+            prep_active      = 1'b0;
+            prep_lookup_seen = 1'b0;
+            prep_output_seen = 1'b0;
+            prep_cycle       = 0;
+        end
+        else begin
+
+            // Detect the edge where feature_register writes
+            // the final feature (index 15).
+            if (!prep_active &&
+                dut.feature_register_inst.load &&
+                dut.feature_register_inst.feature_index == 4'd15) begin
+
+                prep_active      = 1'b1;
+                prep_lookup_seen = 1'b0;
+                prep_output_seen = 1'b0;
+                prep_cycle       = 0;
+
+                prep_sample_count = prep_sample_count + 1;
+                prep_start_time   = $realtime;
+
+                // Let nonblocking assignments update first.
+                #0.001;
+
+                prep_features_snapshot = dut.features;
+
+                $display("");
+                $display("[PREP-CHECK] Sample %0d", prep_sample_count);
+                $display("[PREP-CHECK] Final feature write: %0.3f ns",
+                         prep_start_time);
+                $display("[PREP-CHECK] Feature snapshot = %070h",
+                         prep_features_snapshot);
+            end
+            else if (prep_active) begin
+
+                prep_cycle = prep_cycle + 1;
+
+                // Observe signals after this edge's NBA updates.
+                #0.001;
+
+                // ------------------------------------------------
+                // Cycle 1: Check the LUT output registers.
+                // ------------------------------------------------
+                if (prep_cycle == 1 && !prep_lookup_seen) begin
+
+                    prep_lookup_seen = 1'b1;
+                    prep_lookup_time = $realtime;
+
+                    prep_expected = {
+                        dut.preprocessing_inst.lut_15[dut.preprocessing_inst.addr_15],
+                        dut.preprocessing_inst.lut_14[dut.preprocessing_inst.addr_14],
+                        dut.preprocessing_inst.lut_13[dut.preprocessing_inst.addr_13],
+                        dut.preprocessing_inst.lut_12[dut.preprocessing_inst.addr_12],
+                        dut.preprocessing_inst.lut_11[dut.preprocessing_inst.addr_11],
+                        dut.preprocessing_inst.lut_10[dut.preprocessing_inst.addr_10],
+                        dut.preprocessing_inst.lut_9[dut.preprocessing_inst.addr_9],
+                        dut.preprocessing_inst.lut_8[dut.preprocessing_inst.addr_8],
+                        dut.preprocessing_inst.lut_7[dut.preprocessing_inst.addr_7],
+                        dut.preprocessing_inst.lut_6[dut.preprocessing_inst.addr_6],
+                        dut.preprocessing_inst.lut_5[dut.preprocessing_inst.addr_5],
+                        dut.preprocessing_inst.lut_4[dut.preprocessing_inst.addr_4],
+                        dut.preprocessing_inst.lut_3[dut.preprocessing_inst.addr_3],
+                        dut.preprocessing_inst.lut_2[dut.preprocessing_inst.addr_2],
+                        dut.preprocessing_inst.lut_1[dut.preprocessing_inst.addr_1],
+                        dut.preprocessing_inst.lut_0[dut.preprocessing_inst.addr_0]
+                    };
+
+                    $display("[PREP-CHECK] LUT lookup edge: %0.3f ns",
+                             prep_lookup_time);
+                    $display("[PREP-CHECK] Lookup latency: %0.3f ns",
+                             prep_lookup_time - prep_start_time);
+
+                    if (dut.features !== prep_features_snapshot)
+                        $display("[PREP-FAIL] Feature bus changed after final write!");
+                    else
+                        $display("[PREP-PASS] Feature bus remained stable.");
+
+                    if ({
+                        dut.preprocessing_inst.q15,
+                        dut.preprocessing_inst.q14,
+                        dut.preprocessing_inst.q13,
+                        dut.preprocessing_inst.q12,
+                        dut.preprocessing_inst.q11,
+                        dut.preprocessing_inst.q10,
+                        dut.preprocessing_inst.q9,
+                        dut.preprocessing_inst.q8,
+                        dut.preprocessing_inst.q7,
+                        dut.preprocessing_inst.q6,
+                        dut.preprocessing_inst.q5,
+                        dut.preprocessing_inst.q4,
+                        dut.preprocessing_inst.q3,
+                        dut.preprocessing_inst.q2,
+                        dut.preprocessing_inst.q1,
+                        dut.preprocessing_inst.q0
+                    } !== prep_expected)
+                        $display("[PREP-FAIL] LUT output registers do not match current addresses!");
+                    else
+                        $display("[PREP-PASS] All 16 LUT outputs match their addressed entries.");
+
+                    $display("[PREP-CHECK] Expected LUT data = %032h",
+                             prep_expected);
+                    $display("[PREP-CHECK] Actual q registers = %032h",
+                        {
+                            dut.preprocessing_inst.q15,
+                            dut.preprocessing_inst.q14,
+                            dut.preprocessing_inst.q13,
+                            dut.preprocessing_inst.q12,
+                            dut.preprocessing_inst.q11,
+                            dut.preprocessing_inst.q10,
+                            dut.preprocessing_inst.q9,
+                            dut.preprocessing_inst.q8,
+                            dut.preprocessing_inst.q7,
+                            dut.preprocessing_inst.q6,
+                            dut.preprocessing_inst.q5,
+                            dut.preprocessing_inst.q4,
+                            dut.preprocessing_inst.q3,
+                            dut.preprocessing_inst.q2,
+                            dut.preprocessing_inst.q1,
+                            dut.preprocessing_inst.q0
+                        });
+                end
+
+                // ------------------------------------------------
+                // Cycle 2: Check the final output register.
+                // ------------------------------------------------
+                if (prep_cycle == 2 && !prep_output_seen) begin
+
+                    prep_output_seen = 1'b1;
+                    prep_output_time = $realtime;
+
+                    $display("[PREP-CHECK] Output register edge: %0.3f ns",
+                             prep_output_time);
+                    $display("[PREP-CHECK] Total latency: %0.3f ns",
+                             prep_output_time - prep_start_time);
+
+                    if (dut.features !== prep_features_snapshot)
+                        $display("[PREP-FAIL] Feature bus changed during preprocessing!");
+                    else
+                        $display("[PREP-PASS] Feature bus stayed stable through output capture.");
+
+                    if (dut.preprocessing_inst.preprocessed_reg !==
+                        {
+                            dut.preprocessing_inst.q15,
+                            dut.preprocessing_inst.q14,
+                            dut.preprocessing_inst.q13,
+                            dut.preprocessing_inst.q12,
+                            dut.preprocessing_inst.q11,
+                            dut.preprocessing_inst.q10,
+                            dut.preprocessing_inst.q9,
+                            dut.preprocessing_inst.q8,
+                            dut.preprocessing_inst.q7,
+                            dut.preprocessing_inst.q6,
+                            dut.preprocessing_inst.q5,
+                            dut.preprocessing_inst.q4,
+                            dut.preprocessing_inst.q3,
+                            dut.preprocessing_inst.q2,
+                            dut.preprocessing_inst.q1,
+                            dut.preprocessing_inst.q0
+                        })
+                        $display("[PREP-FAIL] Output register does not match q registers!");
+                    else
+                        $display("[PREP-PASS] Output register matches all q registers.");
+
+                    if (dut.preprocessing_inst.preprocessed_reg !==
+                        prep_expected)
+                        $display("[PREP-FAIL] Output does not match expected LUT data!");
+                    else
+                        $display("[PREP-PASS] Output matches expected LUT data.");
+
+                    $display("[PREP-CHECK] Final output = %032h",
+                             dut.preprocessed);
+
+                    prep_active = 1'b0;
+                    $display("[PREP-CHECK] End of sample %0d",
+                             prep_sample_count);
+                    $display("");
+                end
+            end
+        end
+    end
+
+    // ============================================================
+    // PIPELINE CYCLE MONITOR
+    // ============================================================
+
+    always @(posedge dut.clk_sys) begin
+
+        if (!dut.rst_sys && dut.inference_done) begin
+
+            #0.001;
+
+            $display("");
+            $display("========== INFERENCE TIMING ==========");
+            $display("Input layer cycles     = %0d",
+                     dut.input_layer_cycles);
+
+            $display("Hidden layer 1 cycles  = %0d",
+                     dut.hidden_layer_1_cycles);
+
+            $display("Hidden layer 2 cycles  = %0d",
+                     dut.hidden_layer_2_cycles);
+
+            $display("Output layer cycles    = %0d",
+                     dut.output_layer_cycles);
+
+            $display("Total inference cycles = %0d",
+                     dut.total_inference_cycles);
+
+            $display("======================================");
 
         end
 

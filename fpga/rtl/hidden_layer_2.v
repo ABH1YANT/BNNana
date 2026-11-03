@@ -54,8 +54,13 @@ module hidden_layer_2 #(
     parameter INPUT_COUNT  = 128,
     parameter OUTPUT_COUNT = 32
 )(
-    input  wire [INPUT_COUNT-1:0]  inputs,
-    output wire [OUTPUT_COUNT-1:0] outputs
+    input  wire                  clk,
+    input  wire                  rst,
+    input  wire                  start,
+    input  wire [INPUT_COUNT-1:0] inputs,
+
+    output reg  [OUTPUT_COUNT-1:0] outputs,
+    output reg                   done
 );
 
     // ============================================================
@@ -148,79 +153,188 @@ module hidden_layer_2 #(
     assign thresholds[31] = 8'd70;
 
 
+    
     // ============================================================
     // INTERMEDIATE SIGNALS
     // ============================================================
 
-    wire [127:0] match_bits  [0:31];
-    wire [7:0]   match_count [0:31];
+    wire [127:0] match_bits [0:31];
+
+    // Four partial popcounts per neuron.
+    // Each 32-bit group has a count range of 0..32.
+    wire [5:0] partial0_comb [0:31];
+    wire [5:0] partial1_comb [0:31];
+    wire [5:0] partial2_comb [0:31];
+    wire [5:0] partial3_comb [0:31];
+
+    // Pipeline registers for partial counts.
+    reg [5:0] partial0_reg [0:31];
+    reg [5:0] partial1_reg [0:31];
+    reg [5:0] partial2_reg [0:31];
+    reg [5:0] partial3_reg [0:31];
+
+    reg pending;
+
+    integer k;
+   
+
+    reg [7:0] total_count_temp;
+
+    
+    // ============================================================
+    // BALANCED 32-BIT POPCOUNT TREE
+    // 32 bits -> 16 -> 8 -> 4 -> 2 -> 1
+    // ============================================================
+
+    function [5:0] popcount32;
+        input [31:0] value;
+
+        reg [1:0] level1 [0:15];
+        reg [2:0] level2 [0:7];
+        reg [3:0] level3 [0:3];
+        reg [4:0] level4 [0:1];
+
+        integer idx;
+
+        begin
+
+            // Level 1: Add pairs of bits
+            for (idx = 0; idx < 16; idx = idx + 1)
+                level1[idx] =
+                    {1'b0, value[2*idx]} +
+                    {1'b0, value[2*idx+1]};
+
+            // Level 2: Add pairs of 2-bit counts
+            for (idx = 0; idx < 8; idx = idx + 1)
+                level2[idx] =
+                    {1'b0, level1[2*idx]} +
+                    {1'b0, level1[2*idx+1]};
+
+            // Level 3: Add pairs of 3-bit counts
+            for (idx = 0; idx < 4; idx = idx + 1)
+                level3[idx] =
+                    {1'b0, level2[2*idx]} +
+                    {1'b0, level2[2*idx+1]};
+
+            // Level 4: Add pairs of 4-bit counts
+            for (idx = 0; idx < 2; idx = idx + 1)
+                level4[idx] =
+                    {1'b0, level3[2*idx]} +
+                    {1'b0, level3[2*idx+1]};
+
+            // Level 5: Final 6-bit count
+            popcount32 =
+                {1'b0, level4[0]} +
+                {1'b0, level4[1]};
+
+        end
+    endfunction
 
 
     // ============================================================
-    // 32 LAYER 2 NEURONS
+    // STAGE 1: XNOR + FOUR 32-BIT PARTIAL POPCOUNTS
     // ============================================================
 
     genvar n;
 
     generate
-
         for (n = 0; n < OUTPUT_COUNT; n = n + 1) begin : GEN_NEURONS
-
-            // ----------------------------------------------------
-            // Fixed-weight XNOR
-            //
-            // Since weights are constants:
-            //
-            // weight = 1 -> input
-            // weight = 0 -> inverted input
-            //
-            // Synthesis can constant-fold this logic.
-            // ----------------------------------------------------
 
             assign match_bits[n] = ~(inputs ^ weights[n]);
 
+            
+            wire [5:0] p0;
+            wire [5:0] p1;
+            wire [5:0] p2;
+            wire [5:0] p3;
+
+            assign p0 = popcount32(match_bits[n][31:0]);
+            assign p1 = popcount32(match_bits[n][63:32]);
+            assign p2 = popcount32(match_bits[n][95:64]);
+            assign p3 = popcount32(match_bits[n][127:96]);
+
+            assign partial0_comb[n] = p0;
+            assign partial1_comb[n] = p1;
+            assign partial2_comb[n] = p2;
+            assign partial3_comb[n] = p3;
+
+
+        end
+    endgenerate
+
+
+    // ============================================================
+    // PIPELINE REGISTERS + STAGE 2
+    // ============================================================
+
+    always @(posedge clk) begin
+
+        if (rst) begin
+
+            outputs <= {OUTPUT_COUNT{1'b0}};
+            done    <= 1'b0;
+            pending <= 1'b0;
+
+            for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                partial0_reg[k] <= 6'd0;
+                partial1_reg[k] <= 6'd0;
+                partial2_reg[k] <= 6'd0;
+                partial3_reg[k] <= 6'd0;
+            end
+
+        end
+        else begin
+
+            // Default: done is a one-cycle pulse.
+            done <= 1'b0;
 
             // ----------------------------------------------------
-            // 128-bit POPCOUNT
-            //
-            // Count range = 0..128
-            // Therefore 8-bit count is required.
+            // PIPELINE STAGE 1:
+            // Capture four partial popcounts for every neuron.
             // ----------------------------------------------------
 
-            integer i;
+            if (start && !pending) begin
 
-            reg [7:0] count_temp;
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
 
-            always @(*) begin
-
-                count_temp = 8'd0;
-
-                for (i = 0; i < INPUT_COUNT; i = i + 1) begin
-
-                    count_temp =
-                        count_temp
-                        +
-                        match_bits[n][i];
+                    partial0_reg[k] <= partial0_comb[k];
+                    partial1_reg[k] <= partial1_comb[k];
+                    partial2_reg[k] <= partial2_comb[k];
+                    partial3_reg[k] <= partial3_comb[k];
 
                 end
 
+                pending <= 1'b1;
+
             end
 
-            assign match_count[n] = count_temp;
-
-
             // ----------------------------------------------------
-            // BINARY SIGN / THRESHOLD
-            //
-            // count > threshold -> 1
-            // count <= threshold -> 0
+            // PIPELINE STAGE 2:
+            // Add partial counts and compare against threshold.
             // ----------------------------------------------------
 
-            assign outputs[n] =
-                (match_count[n] >= thresholds[n]);
+            else if (pending) begin
+
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+
+                    total_count_temp =
+                          {2'b00, partial0_reg[k]}
+                        + {2'b00, partial1_reg[k]}
+                        + {2'b00, partial2_reg[k]}
+                        + {2'b00, partial3_reg[k]};
+
+                    outputs[k] <=
+                        (total_count_temp >= thresholds[k]);
+
+                end
+
+                pending <= 1'b0;
+                done    <= 1'b1;
+
+            end
 
         end
 
-    endgenerate
+    end
 
 endmodule
