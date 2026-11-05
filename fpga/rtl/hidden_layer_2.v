@@ -153,118 +153,50 @@ module hidden_layer_2 #(
     assign thresholds[31] = 8'd70;
 
 
-    
     // ============================================================
-    // INTERMEDIATE SIGNALS
+    // PIPELINE REGISTERS
     // ============================================================
 
-    wire [127:0] match_bits [0:31];
+    // Stage 1: Registered XNOR match vectors
+    reg [127:0] match_reg [0:31];
 
-    // Four partial popcounts per neuron.
-    // Each 32-bit group has a count range of 0..32.
-    wire [5:0] partial0_comb [0:31];
-    wire [5:0] partial1_comb [0:31];
-    wire [5:0] partial2_comb [0:31];
-    wire [5:0] partial3_comb [0:31];
+    // Stage 2: 64 pairwise counts, 2 bits each
+    reg [127:0] pair_count [0:31];
 
-    // Pipeline registers for partial counts.
-    reg [5:0] partial0_reg [0:31];
-    reg [5:0] partial1_reg [0:31];
-    reg [5:0] partial2_reg [0:31];
-    reg [5:0] partial3_reg [0:31];
+    // Stage 3: 32 groups of 4, 3 bits each
+    reg [95:0] quad_count [0:31];
 
-    reg pending;
+    // Stage 4: 16 groups of 8, 4 bits each
+    reg [63:0] oct_count [0:31];
+
+    // Stage 5: 8 groups of 16, 5 bits each
+    reg [39:0] sixteen_count [0:31];
+
+    // Stage 6: 4 groups of 32, 6 bits each
+    reg [23:0] thirtytwo_count [0:31];
+
+    // Stage 7: 2 groups of 64, 7 bits each
+    reg [13:0] sixtyfour_count [0:31];
+
+    // Stage 8: Final 128-bit count
+    reg [7:0] total_count [0:31];
+
+    // Pipeline valid signals
+    reg valid1;
+    reg valid2;
+    reg valid3;
+    reg valid4;
+    reg valid5;
+    reg valid6;
+    reg valid7;
+    reg valid8;
 
     integer k;
-   
-
-    reg [7:0] total_count_temp;
-
-    
-    // ============================================================
-    // BALANCED 32-BIT POPCOUNT TREE
-    // 32 bits -> 16 -> 8 -> 4 -> 2 -> 1
-    // ============================================================
-
-    function [5:0] popcount32;
-        input [31:0] value;
-
-        reg [1:0] level1 [0:15];
-        reg [2:0] level2 [0:7];
-        reg [3:0] level3 [0:3];
-        reg [4:0] level4 [0:1];
-
-        integer idx;
-
-        begin
-
-            // Level 1: Add pairs of bits
-            for (idx = 0; idx < 16; idx = idx + 1)
-                level1[idx] =
-                    {1'b0, value[2*idx]} +
-                    {1'b0, value[2*idx+1]};
-
-            // Level 2: Add pairs of 2-bit counts
-            for (idx = 0; idx < 8; idx = idx + 1)
-                level2[idx] =
-                    {1'b0, level1[2*idx]} +
-                    {1'b0, level1[2*idx+1]};
-
-            // Level 3: Add pairs of 3-bit counts
-            for (idx = 0; idx < 4; idx = idx + 1)
-                level3[idx] =
-                    {1'b0, level2[2*idx]} +
-                    {1'b0, level2[2*idx+1]};
-
-            // Level 4: Add pairs of 4-bit counts
-            for (idx = 0; idx < 2; idx = idx + 1)
-                level4[idx] =
-                    {1'b0, level3[2*idx]} +
-                    {1'b0, level3[2*idx+1]};
-
-            // Level 5: Final 6-bit count
-            popcount32 =
-                {1'b0, level4[0]} +
-                {1'b0, level4[1]};
-
-        end
-    endfunction
+    integer j;
 
 
     // ============================================================
-    // STAGE 1: XNOR + FOUR 32-BIT PARTIAL POPCOUNTS
-    // ============================================================
-
-    genvar n;
-
-    generate
-        for (n = 0; n < OUTPUT_COUNT; n = n + 1) begin : GEN_NEURONS
-
-            assign match_bits[n] = ~(inputs ^ weights[n]);
-
-            
-            wire [5:0] p0;
-            wire [5:0] p1;
-            wire [5:0] p2;
-            wire [5:0] p3;
-
-            assign p0 = popcount32(match_bits[n][31:0]);
-            assign p1 = popcount32(match_bits[n][63:32]);
-            assign p2 = popcount32(match_bits[n][95:64]);
-            assign p3 = popcount32(match_bits[n][127:96]);
-
-            assign partial0_comb[n] = p0;
-            assign partial1_comb[n] = p1;
-            assign partial2_comb[n] = p2;
-            assign partial3_comb[n] = p3;
-
-
-        end
-    endgenerate
-
-
-    // ============================================================
-    // PIPELINE REGISTERS + STAGE 2
+    // NINE-STAGE PIPELINE
     // ============================================================
 
     always @(posedge clk) begin
@@ -272,69 +204,174 @@ module hidden_layer_2 #(
         if (rst) begin
 
             outputs <= {OUTPUT_COUNT{1'b0}};
-            done    <= 1'b0;
-            pending <= 1'b0;
-
-            for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
-                partial0_reg[k] <= 6'd0;
-                partial1_reg[k] <= 6'd0;
-                partial2_reg[k] <= 6'd0;
-                partial3_reg[k] <= 6'd0;
-            end
-
-        end
-        else begin
-
-            // Default: done is a one-cycle pulse.
             done <= 1'b0;
 
-            // ----------------------------------------------------
-            // PIPELINE STAGE 1:
-            // Capture four partial popcounts for every neuron.
-            // ----------------------------------------------------
+            valid1 <= 1'b0;
+            valid2 <= 1'b0;
+            valid3 <= 1'b0;
+            valid4 <= 1'b0;
+            valid5 <= 1'b0;
+            valid6 <= 1'b0;
+            valid7 <= 1'b0;
+            valid8 <= 1'b0;
 
-            if (start && !pending) begin
-
-                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
-
-                    partial0_reg[k] <= partial0_comb[k];
-                    partial1_reg[k] <= partial1_comb[k];
-                    partial2_reg[k] <= partial2_comb[k];
-                    partial3_reg[k] <= partial3_comb[k];
-
-                end
-
-                pending <= 1'b1;
-
-            end
-
-            // ----------------------------------------------------
-            // PIPELINE STAGE 2:
-            // Add partial counts and compare against threshold.
-            // ----------------------------------------------------
-
-            else if (pending) begin
-
-                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
-
-                    total_count_temp =
-                          {2'b00, partial0_reg[k]}
-                        + {2'b00, partial1_reg[k]}
-                        + {2'b00, partial2_reg[k]}
-                        + {2'b00, partial3_reg[k]};
-
-                    outputs[k] <=
-                        (total_count_temp >= thresholds[k]);
-
-                end
-
-                pending <= 1'b0;
-                done    <= 1'b1;
-
+            for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                match_reg[k]      <= 128'd0;
+                pair_count[k]     <= 128'd0;
+                quad_count[k]     <= 96'd0;
+                oct_count[k]      <= 64'd0;
+                sixteen_count[k]  <= 40'd0;
+                thirtytwo_count[k] <= 24'd0;
+                sixtyfour_count[k] <= 14'd0;
+                total_count[k]    <= 8'd0;
             end
 
         end
 
+        else begin
+
+            // ----------------------------------------------------
+            // PIPELINE VALID CONTROL
+            // ----------------------------------------------------
+
+            valid1 <= start;
+            valid2 <= valid1;
+            valid3 <= valid2;
+            valid4 <= valid3;
+            valid5 <= valid4;
+            valid6 <= valid5;
+            valid7 <= valid6;
+            valid8 <= valid7;
+
+            done <= valid8;
+
+
+            // ----------------------------------------------------
+            // STAGE 1: XNOR
+            // ----------------------------------------------------
+
+            if (start) begin
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                    match_reg[k] <= ~(inputs ^ weights[k]);
+                end
+            end
+
+
+            // ----------------------------------------------------
+            // STAGE 2: 128 BITS -> 64 PAIR COUNTS
+            // ----------------------------------------------------
+
+            if (valid1) begin
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                    for (j = 0; j < 64; j = j + 1) begin
+                        pair_count[k][2*j +: 2] <=
+                            {1'b0, match_reg[k][2*j]} +
+                            {1'b0, match_reg[k][2*j+1]};
+                    end
+                end
+            end
+
+
+            // ----------------------------------------------------
+            // STAGE 3: 64 PAIR COUNTS -> 32 GROUPS OF 4
+            // ----------------------------------------------------
+
+            if (valid2) begin
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                    for (j = 0; j < 32; j = j + 1) begin
+                        quad_count[k][3*j +: 3] <=
+                            {1'b0, pair_count[k][4*j +: 2]} +
+                            {1'b0, pair_count[k][4*j+2 +: 2]};
+                    end
+                end
+            end
+
+
+            // ----------------------------------------------------
+            // STAGE 4: 32 GROUPS OF 4 -> 16 GROUPS OF 8
+            // ----------------------------------------------------
+
+            if (valid3) begin
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                    for (j = 0; j < 16; j = j + 1) begin
+                        oct_count[k][4*j +: 4] <=
+                            {1'b0, quad_count[k][6*j +: 3]} +
+                            {1'b0, quad_count[k][6*j+3 +: 3]};
+                    end
+                end
+            end
+
+
+            // ----------------------------------------------------
+            // STAGE 5: 16 GROUPS OF 8 -> 8 GROUPS OF 16
+            // ----------------------------------------------------
+
+            if (valid4) begin
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                    for (j = 0; j < 8; j = j + 1) begin
+                        sixteen_count[k][5*j +: 5] <=
+                            {1'b0, oct_count[k][8*j +: 4]} +
+                            {1'b0, oct_count[k][8*j+4 +: 4]};
+                    end
+                end
+            end
+
+
+            // ----------------------------------------------------
+            // STAGE 6: 8 GROUPS OF 16 -> 4 GROUPS OF 32
+            // ----------------------------------------------------
+
+            if (valid5) begin
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                    for (j = 0; j < 4; j = j + 1) begin
+                        thirtytwo_count[k][6*j +: 6] <=
+                            {1'b0, sixteen_count[k][10*j +: 5]} +
+                            {1'b0, sixteen_count[k][10*j+5 +: 5]};
+                    end
+                end
+            end
+
+
+            // ----------------------------------------------------
+            // STAGE 7: 4 GROUPS OF 32 -> 2 GROUPS OF 64
+            // ----------------------------------------------------
+
+            if (valid6) begin
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                    for (j = 0; j < 2; j = j + 1) begin
+                        sixtyfour_count[k][7*j +: 7] <=
+                            {1'b0, thirtytwo_count[k][12*j +: 6]} +
+                            {1'b0, thirtytwo_count[k][12*j+6 +: 6]};
+                    end
+                end
+            end
+
+
+            // ----------------------------------------------------
+            // STAGE 8: 2 GROUPS OF 64 -> FINAL 128-BIT COUNT
+            // ----------------------------------------------------
+
+            if (valid7) begin
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                    total_count[k] <=
+                        {1'b0, sixtyfour_count[k][6:0]} +
+                        {1'b0, sixtyfour_count[k][13:7]};
+                end
+            end
+
+
+            // ----------------------------------------------------
+            // STAGE 9: THRESHOLD COMPARISON
+            // ----------------------------------------------------
+
+            if (valid8) begin
+                for (k = 0; k < OUTPUT_COUNT; k = k + 1) begin
+                    outputs[k] <=
+                        (total_count[k] >= thresholds[k]);
+                end
+            end
+
+        end
     end
 
 endmodule

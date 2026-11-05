@@ -24,10 +24,18 @@ module input_layer #(
     parameter INPUT_WIDTH  = 8,
     parameter ACC_WIDTH    = 16
 )(
+    input wire clk,
+    input wire rst,
+    input wire enable,
+
     input wire [INPUT_COUNT*INPUT_WIDTH-1:0] inputs,
 
-    output wire [OUTPUT_COUNT-1:0] outputs
+    output wire [OUTPUT_COUNT-1:0] outputs,
+    output wire done
 );
+
+    wire [OUTPUT_COUNT-1:0] neuron_outputs;
+    wire [OUTPUT_COUNT-1:0] neuron_done;
 
     // ============================================================
     // LAYER 0 WEIGHTS
@@ -189,14 +197,9 @@ module input_layer #(
     assign thresholds[63] = 16'shFEED;
 
 
-    // ============================================================
-    // 64 BNN NEURONS
-    // ============================================================
-
     genvar n;
 
     generate
-
         for (n = 0; n < OUTPUT_COUNT; n = n + 1) begin : GEN_NEURONS
 
             bnn_neuron #(
@@ -204,19 +207,23 @@ module input_layer #(
                 .INPUT_WIDTH(INPUT_WIDTH),
                 .ACC_WIDTH(ACC_WIDTH)
             ) neuron_inst (
+                .clk(clk),
+                .rst(rst),
+                .enable(enable),
 
                 .inputs(inputs),
-
                 .weights(weights[n]),
-
                 .threshold(thresholds[n]),
 
-                .output_bit(outputs[n])
-
+                .output_bit(neuron_outputs[n]),
+                .done(neuron_done[n])
             );
 
         end
-
     endgenerate
+
+    // All 64 neurons process the same input simultaneously.
+    assign outputs = neuron_outputs;
+    assign done = neuron_done[0];
 
 endmodule

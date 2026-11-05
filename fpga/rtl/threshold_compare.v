@@ -1,39 +1,40 @@
+
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company:
-// Engineer:
-//
-// Create Date: 09/14/2026 12:37:01 AM
-// Design Name:
-// Module Name: threshold_compare
-// Project Name:
-// Target Devices:
-// Tool Versions:
-// Description:
-//
-// Dependencies:
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-//
-//////////////////////////////////////////////////////////////////////////////////
 
 module threshold_compare #(
     parameter COUNT_WIDTH = 7
 )(
-    input  wire [COUNT_WIDTH-1:0] count,
-    input  wire [COUNT_WIDTH-1:0] threshold,
-    output wire                   output_bit
+    input wire clk,
+    input wire rst,
+    input wire enable,
+
+    input wire [COUNT_WIDTH-1:0] count,
+    input wire [COUNT_WIDTH-1:0] threshold,
+
+    output reg output_bit,
+    output reg done
 );
 
-    // BinarySign:
-    //
-    // count >= threshold -> 1
-    // count <  threshold -> 0
-    //
-    // Equality is important because Python's BinarySign
-    // maps exactly-zero BN output to +1.
+    // ============================================================
+    // REGISTERED THRESHOLD COMPARISON
+    // ============================================================
 
-    assign output_bit = (count >= threshold);
+    always @(posedge clk) begin
+
+        if (rst) begin
+            output_bit <= 1'b0;
+            done       <= 1'b0;
+        end
+
+        else begin
+
+            done <= enable;
+
+            if (enable)
+                output_bit <= (count >= threshold);
+
+        end
+
+    end
 
 endmodule

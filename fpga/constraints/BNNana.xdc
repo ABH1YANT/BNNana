@@ -34,8 +34,12 @@ set_property C_INPUT_PIPE_STAGES 0 [get_debug_cores u_ila_0]
 set_property C_TRIGIN_EN false [get_debug_cores u_ila_0]
 set_property C_TRIGOUT_EN false [get_debug_cores u_ila_0]
 
+# 100 MHz clock constraint
+create_clock -period 10.000 [get_ports clk]
+
+# ILA clock
 set_property port_width 1 [get_debug_ports u_ila_0/clk]
-connect_debug_port u_ila_0/clk [get_nets [list clk_wiz_inst/inst/clk_out1]]
+connect_debug_port u_ila_0/clk [get_nets clk_IBUF_BUFG]
 
 set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe0]
 set_property port_width 1 [get_debug_ports u_ila_0/probe0]
@@ -69,7 +73,7 @@ connect_debug_port u_ila_0/probe5 [get_nets [list packet_error]]
 create_debug_port u_ila_0 probe
 set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe6]
 set_property port_width 1 [get_debug_ports u_ila_0/probe6]
-connect_debug_port u_ila_0/probe6 [get_nets [list result_valid]]
+connect_debug_port u_ila_0/probe6 [get_nets inference_done]
 
 create_debug_port u_ila_0 probe
 set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe7]
@@ -87,7 +91,7 @@ set_property port_width 1 [get_debug_ports u_ila_0/probe9]
 connect_debug_port u_ila_0/probe9 [get_nets [list tx_start]]
 
 ## Debug hub
-set_property C_CLK_INPUT_FREQ_HZ 75000000 [get_debug_cores dbg_hub]
+set_property C_CLK_INPUT_FREQ_HZ 100000000 [get_debug_cores dbg_hub]
 set_property C_ENABLE_CLK_DIVIDER false [get_debug_cores dbg_hub]
 set_property C_USER_SCAN_CHAIN 1 [get_debug_cores dbg_hub]
-connect_debug_port dbg_hub/clk [get_nets clk_sys]
+connect_debug_port dbg_hub/clk [get_nets clk_IBUF_BUFG]

@@ -7,10 +7,9 @@ module inference_core (
     input wire [127:0] features,
 
     output wire        classification,
-    output reg         inference_done,
-    output reg         busy,
+    output wire        inference_done,
+    output wire        busy,
 
-    // Debug outputs for ILA
     output wire [2:0]  debug_stage,
     output wire [31:0] input_layer_cycles,
     output wire [31:0] hidden_layer_1_cycles,
@@ -21,348 +20,312 @@ module inference_core (
 );
 
     // ============================================================
-    // Pipeline registers
+    // LAYER OUTPUTS AND VALID SIGNALS
     // ============================================================
 
-    // Stage 0: capture preprocessed input
-    (* DONT_TOUCH = "TRUE" *)
-    reg [127:0] preprocessed_reg;
+    wire [63:0] l0_outputs;
+    wire        l0_done;
 
-    // Stage 1: Layer 0 output
-    reg [63:0] input_layer_reg;
+    wire [63:0] h1_outputs;
+    wire        h1_done;
 
-    // Stage 2: Layer 1 output
-    reg [63:0] hidden_layer_1_reg;
+    wire [31:0] h2_outputs;
+    wire        h2_done;
 
-    // Stage 3: Layer 2 output
-    reg [31:0] hidden_layer_2_reg;
-
-    // Final result
-    reg classification_reg;
-
-    reg [2:0] stage;
-    reg       start_seen;
-
-    // ============================================================
-    // DEBUG CYCLE COUNTERS
-    // ============================================================
-
-    (* MARK_DEBUG = "TRUE" *)
-    reg [31:0] input_layer_cycles_reg;
-
-    (* MARK_DEBUG = "TRUE" *)
-    reg [31:0] hidden_layer_1_cycles_reg;
-
-    (* MARK_DEBUG = "TRUE" *)
-    reg [31:0] hidden_layer_2_cycles_reg;
-
-    (* MARK_DEBUG = "TRUE" *)
-    reg [31:0] output_layer_cycles_reg;
-
-    (* MARK_DEBUG = "TRUE" *)
-    reg [31:0] inference_cycle_count_reg;
-
-    (* MARK_DEBUG = "TRUE" *)
-    reg [31:0] total_inference_cycles_reg;
-
-
-    // Expose the existing stage register
-    assign debug_stage = stage;
-
-
-    // Connect internal counters to module outputs
-    assign input_layer_cycles = input_layer_cycles_reg;
-
-    assign hidden_layer_1_cycles = hidden_layer_1_cycles_reg;
-
-    assign hidden_layer_2_cycles = hidden_layer_2_cycles_reg;
-
-    assign output_layer_cycles = output_layer_cycles_reg;
-
-    assign inference_cycle_count = inference_cycle_count_reg;
-
-    assign total_inference_cycles = total_inference_cycles_reg;
-
-    // ============================================================
-    // Combinational layer outputs
-    // ============================================================
-
-    wire [63:0]  input_layer_comb;
-    wire [63:0]  hidden_layer_1_comb;
-    wire [127:0] hidden_layer_2_input;
-    wire [31:0]  hidden_layer_2_comb;
-    wire [159:0] output_input;
-    wire         output_comb;
-    wire hidden_layer_2_done;
-    reg  hidden_layer_2_start;
+    wire        final_output;
+    wire        final_done;
 
 
     // ============================================================
-    // Bit-order conversion
-    //
-    // Python exports binary vectors MSB-first.
-    //
-    // RTL layer registers store the corresponding first Python
-    // bit at bit 0.
-    //
-    // Therefore each 64-bit activation vector must be reversed
-    // before being presented to the next Python-exported weight
-    // matrix.
+    // BIT ORDER CONVERSION
     // ============================================================
 
     function [63:0] reverse64;
         input [63:0] value;
         integer k;
-
         begin
-            for (k = 0; k < 64; k = k + 1) begin
+            for (k = 0; k < 64; k = k + 1)
                 reverse64[k] = value[63-k];
-            end
         end
     endfunction
 
-    wire [63:0] input_layer_for_hidden_layer_2;
-    wire [63:0] hidden_layer_1_for_hidden_layer_2;
 
-    assign input_layer_for_hidden_layer_2 = reverse64(input_layer_reg);
-    assign hidden_layer_1_for_hidden_layer_2 = reverse64(hidden_layer_1_reg);
+    // ============================================================
+    // SKIP CONNECTION DELAY 1
+    //
+    // Delay Layer 0 output by four cycles to align it
+    // with Hidden Layer 1 output.
+    // ============================================================
+
+    reg [63:0] l0_delay [0:3];
+
+    wire [127:0] h2_input;
+
+    assign h2_input = {
+        h1_outputs,
+        l0_delay[3]
+    };
 
 
     // ============================================================
-    // Layer 0
+    // SKIP CONNECTION DELAY 2
+    //
+    // Delay Layer 0 and Layer 1 outputs by nine cycles
+    // to align them with Hidden Layer 2 output.
+    // ============================================================
+
+    reg [127:0] skip_delay [0:8];
+
+    wire [159:0] output_input;
+
+    assign output_input = {
+        skip_delay[8],
+        h2_outputs
+    };
+
+
+    // ============================================================
+    // LAYER 0: INPUT LAYER
+    //
+    // Accepts one new feature vector whenever start is high.
     // ============================================================
 
     input_layer input_layer_inst (
-        .inputs(preprocessed_reg),
-        .outputs(input_layer_comb)
+        .clk     (clk),
+        .rst     (rst),
+        .enable  (start),
+        .inputs  (features),
+        .outputs (l0_outputs),
+        .done    (l0_done)
     );
 
 
     // ============================================================
-    // Layer 1
+    // LAYER 1: HIDDEN LAYER 1
+    //
+    // Starts whenever Layer 0 produces a valid result.
     // ============================================================
 
     hidden_layer_1 hidden_layer_1_inst (
-        .inputs(input_layer_reg),
-        .outputs(hidden_layer_1_comb)
+        .clk     (clk),
+        .rst     (rst),
+        .enable  (l0_done),
+        .inputs  (l0_outputs),
+        .outputs (h1_outputs),
+        .done    (h1_done)
     );
 
 
     // ============================================================
-    // Layer 2
+    // LAYER 2: HIDDEN LAYER 2
     //
-    // Python architecture:
-    //
-    //     Layer 2 input = [Layer 0 output | Layer 1 output]
-    //
-    // Each 64-bit activation vector is reversed here so that
-    // the Python-exported weight bit ordering is preserved.
+    // Combines the aligned Layer 0 and Layer 1 outputs.
     // ============================================================
-
-    assign hidden_layer_2_input = {
-        input_layer_for_hidden_layer_2,
-        hidden_layer_1_for_hidden_layer_2
-    };
 
     hidden_layer_2 hidden_layer_2_inst (
         .clk     (clk),
         .rst     (rst),
-        .start   (hidden_layer_2_start),
-        .inputs  (hidden_layer_2_input),
-        .outputs(hidden_layer_2_comb),
-        .done    (hidden_layer_2_done)
+        .start   (h1_done),
+        .inputs  (h2_input),
+        .outputs (h2_outputs),
+        .done    (h2_done)
     );
 
 
     // ============================================================
-    // Output layer
+    // OUTPUT LAYER
     //
-    // NOT being debugged/modified yet.
-    //
-    // We will verify Layer 2 first.
+    // Combines the two delayed skip connections with
+    // the Hidden Layer 2 output.
     // ============================================================
-
-    assign output_input = {
-        input_layer_reg,
-        hidden_layer_1_reg,
-        hidden_layer_2_reg
-    };
 
     output_layer output_layer_inst (
-        .inputs(output_input),
-        .output_bit(output_comb)
+        .clk        (clk),
+        .rst        (rst),
+        .enable     (h2_done),
+        .inputs     (output_input),
+        .output_bit (final_output),
+        .done       (final_done)
     );
 
 
     // ============================================================
-    // Pipeline control
+    // FINAL OUTPUTS
     // ============================================================
 
-    localparam STAGE_IDLE   = 3'd0;
-    localparam STAGE_L0     = 3'd1;
-    localparam STAGE_L1     = 3'd2;
-    localparam STAGE_L2     = 3'd3;
-    localparam STAGE_OUTPUT = 3'd4;
+    assign classification = final_output;
+    assign inference_done = final_done;
 
 
     // ============================================================
-    // SEQUENTIAL PIPELINE + DEBUG CYCLE COUNTERS
+    // OUTSTANDING INFERENCE COUNTER
+    //
+    // Supports multiple simultaneous inferences.
     // ============================================================
 
-        
+    reg [31:0] outstanding_count;
+
+    assign busy = (outstanding_count != 0);
+
+
+    // ============================================================
+    // DEBUG REGISTERS
+    // ============================================================
+
+    reg [2:0] stage;
+
+    reg [31:0] input_layer_cycles_reg;
+    reg [31:0] hidden_layer_1_cycles_reg;
+    reg [31:0] hidden_layer_2_cycles_reg;
+    reg [31:0] output_layer_cycles_reg;
+
+    reg [31:0] inference_cycle_count_reg;
+    reg [31:0] total_inference_cycles_reg;
+
+    assign debug_stage = stage;
+
+    assign input_layer_cycles = input_layer_cycles_reg;
+    assign hidden_layer_1_cycles = hidden_layer_1_cycles_reg;
+    assign hidden_layer_2_cycles = hidden_layer_2_cycles_reg;
+    assign output_layer_cycles = output_layer_cycles_reg;
+
+    assign inference_cycle_count = inference_cycle_count_reg;
+    assign total_inference_cycles = total_inference_cycles_reg;
+
+    localparam PIPELINE_LATENCY = 32'd25;
+
+
+    // ============================================================
+    // PIPELINE DATA ALIGNMENT AND DEBUG CONTROL
+    // ============================================================
+
+    integer d;
+
     always @(posedge clk) begin
 
         if (rst) begin
 
-            preprocessed_reg    <= 128'd0;
-            input_layer_reg     <= 64'd0;
-            hidden_layer_1_reg  <= 64'd0;
-            hidden_layer_2_reg  <= 32'd0;
+            // Layer 0 alignment registers
+            for (d = 0; d < 4; d = d + 1)
+                l0_delay[d] <= 64'd0;
 
-            classification_reg  <= 1'b0;
+            // Skip connection alignment registers
+            for (d = 0; d < 9; d = d + 1)
+                skip_delay[d] <= 128'd0;
 
-            stage               <= STAGE_IDLE;
-            start_seen          <= 1'b0;
-            hidden_layer_2_start <= 1'b0;
+            // Outstanding inference tracking
+            outstanding_count <= 32'd0;
 
-            busy                <= 1'b0;
-            inference_done      <= 1'b0;
+            // Debug stage
+            stage <= 3'd0;
 
-            input_layer_cycles_reg     <= 32'd0;
-            hidden_layer_1_cycles_reg  <= 32'd0;
-            hidden_layer_2_cycles_reg  <= 32'd0;
-            output_layer_cycles_reg    <= 32'd0;
+            // Debug counters
+            input_layer_cycles_reg <= 32'd0;
+            hidden_layer_1_cycles_reg <= 32'd0;
+            hidden_layer_2_cycles_reg <= 32'd0;
+            output_layer_cycles_reg <= 32'd0;
 
-            inference_cycle_count_reg  <= 32'd0;
+            inference_cycle_count_reg <= 32'd0;
             total_inference_cycles_reg <= 32'd0;
 
         end
+
         else begin
 
-            inference_done       <= 1'b0;
-            hidden_layer_2_start <= 1'b0;
-
-            if (!start)
-                start_seen <= 1'b0;
-
             // ----------------------------------------------------
-            // START: Capture preprocessed features
+            // LAYER 0 -> LAYER 1 ALIGNMENT
             // ----------------------------------------------------
 
-            if (start && !start_seen && !busy) begin
+            if (l0_done)
+                l0_delay[0] <= l0_outputs;
+            else
+                l0_delay[0] <= 64'd0;
 
-                preprocessed_reg <= features;
+            for (d = 1; d < 4; d = d + 1)
+                l0_delay[d] <= l0_delay[d-1];
 
-                busy       <= 1'b1;
-                start_seen <= 1'b1;
-
-                stage <= STAGE_L0;
-
-                input_layer_cycles_reg     <= 32'd0;
-                hidden_layer_1_cycles_reg  <= 32'd0;
-                hidden_layer_2_cycles_reg  <= 32'd0;
-                output_layer_cycles_reg    <= 32'd0;
-
-                inference_cycle_count_reg  <= 32'd0;
-                total_inference_cycles_reg <= 32'd0;
-
-            end
 
             // ----------------------------------------------------
-            // STAGE 1: Input layer
+            // LAYER 1 -> OUTPUT SKIP CONNECTION ALIGNMENT
             // ----------------------------------------------------
 
-            else if (busy && stage == STAGE_L0) begin
+            if (h1_done)
+                skip_delay[0] <= {
+                    l0_delay[3],
+                    h1_outputs
+                };
+            else
+                skip_delay[0] <= 128'd0;
 
-                input_layer_reg <= input_layer_comb;
+            for (d = 1; d < 9; d = d + 1)
+                skip_delay[d] <= skip_delay[d-1];
 
+
+            // ----------------------------------------------------
+            // OUTSTANDING INFERENCE TRACKING
+            // ----------------------------------------------------
+
+            case ({start, final_done})
+
+                2'b10:
+                    outstanding_count <= outstanding_count + 1'b1;
+
+                2'b01: begin
+                    if (outstanding_count != 0)
+                        outstanding_count <= outstanding_count - 1'b1;
+                end
+
+                default:
+                    outstanding_count <= outstanding_count;
+
+            endcase
+
+
+            // ----------------------------------------------------
+            // DEBUG COUNTERS
+            // ----------------------------------------------------
+
+            if (start)
                 input_layer_cycles_reg <=
                     input_layer_cycles_reg + 1'b1;
 
-                inference_cycle_count_reg <=
-                    inference_cycle_count_reg + 1'b1;
-
-                stage <= STAGE_L1;
-
-            end
-
-            // ----------------------------------------------------
-            // STAGE 2: Hidden layer 1
-            // ----------------------------------------------------
-
-            else if (busy && stage == STAGE_L1) begin
-
-                hidden_layer_1_reg <= hidden_layer_1_comb;
-
+            if (l0_done)
                 hidden_layer_1_cycles_reg <=
                     hidden_layer_1_cycles_reg + 1'b1;
 
-                inference_cycle_count_reg <=
-                    inference_cycle_count_reg + 1'b1;
-
-                // Start hidden layer 2 exactly once.
-                hidden_layer_2_start <= 1'b1;
-
-                stage <= STAGE_L2;
-
-            end
-
-            // ----------------------------------------------------
-            // STAGE 3: Pipelined hidden layer 2
-            // ----------------------------------------------------
-
-            else if (busy && stage == STAGE_L2) begin
-
+            if (h1_done)
                 hidden_layer_2_cycles_reg <=
                     hidden_layer_2_cycles_reg + 1'b1;
 
-                inference_cycle_count_reg <=
-                    inference_cycle_count_reg + 1'b1;
-
-                // Wait until the registered layer output is ready.
-                if (hidden_layer_2_done) begin
-
-                    hidden_layer_2_reg <= hidden_layer_2_comb;
-
-                    stage <= STAGE_OUTPUT;
-
-                end
-
-            end
-
-            // ----------------------------------------------------
-            // STAGE 4: Output layer
-            // ----------------------------------------------------
-
-            else if (busy && stage == STAGE_OUTPUT) begin
-
-                classification_reg <= output_comb;
-
+            if (h2_done)
                 output_layer_cycles_reg <=
                     output_layer_cycles_reg + 1'b1;
 
+            if (busy || start)
                 inference_cycle_count_reg <=
                     inference_cycle_count_reg + 1'b1;
 
+            if (final_done)
                 total_inference_cycles_reg <=
-                    inference_cycle_count_reg + 1'b1;
+                    total_inference_cycles_reg + PIPELINE_LATENCY;
 
-                busy           <= 1'b0;
-                inference_done <= 1'b1;
 
-                stage <= STAGE_IDLE;
+            // ----------------------------------------------------
+            // DEBUG STAGE
+            // ----------------------------------------------------
 
-            end
+            if (final_done)
+                stage <= 3'd0;
+            else if (h2_done)
+                stage <= 3'd4;
+            else if (h1_done)
+                stage <= 3'd3;
+            else if (l0_done)
+                stage <= 3'd2;
+            else if (start)
+                stage <= 3'd1;
 
         end
-
     end
-
-
-    // ============================================================
-    // Final classification output
-    // ============================================================
-
-    assign classification = classification_reg;
 
 endmodule

@@ -1,8 +1,8 @@
 `timescale 1ns / 1ps
 
 module fpga_top #(
-    parameter CLK_FREQ  = 75_000_000,
-    parameter BAUD_RATE = 115200
+    parameter CLK_FREQ  = 100_000_000,
+    parameter BAUD_RATE = 2_000_000
 )(
     input wire clk,
     input wire rst,
@@ -15,12 +15,9 @@ module fpga_top #(
     // ============================================================
 
     // Clock and Reset
-    wire        clk_sys;
-    wire        rst_active;
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
-    wire        clk_locked;
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
     wire        rst_sys;
+    wire clk_sys;
+    wire rst_active;
 
     // UART RX
     wire [7:0]  rx_data;
@@ -39,10 +36,43 @@ module fpga_top #(
     wire        packet_error;
 
     // Feature Register
+    // ============================================================
+    // DUAL-BANK FEATURE STORAGE
+    // ============================================================
+
     wire [277:0] features;
+
+    wire [1:0] bank_available;
+
+    wire write_bank;
+    wire completed_bank;
+    wire bank_complete;
+
+    wire bank_release;
+    wire released_bank;
+
+    reg [1:0] bank_owned;
+    reg [1:0] bank_ready;
+
+    reg read_bank;
+    reg active_bank;
+
+    // A bank is available only when it is not owned.
+    assign bank_available = ~bank_owned;
 
     // Preprocessing
     wire [127:0] preprocessed;
+    wire preprocessing_done;
+    reg preprocessing_start;
+
+    // ============================================================
+    // PACKET BANK SCHEDULER
+    // ============================================================
+
+    localparam SCH_IDLE = 1'b0;
+    localparam SCH_WAIT_PREP = 1'b1;
+
+    reg scheduler_state;
 
     // Inference Core
     // ============================================================
@@ -86,10 +116,7 @@ module fpga_top #(
     (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
     wire [31:0] total_inference_cycles;
 
-    // Controller FSM
-    (* MARK_DEBUG = "TRUE", KEEP = "TRUE" *)
     wire        result_valid;
-    wire        controller_busy;
 
     // UART Controller & TX
     wire [7:0]  tx_data;
@@ -100,31 +127,130 @@ module fpga_top #(
     wire        tx_done;
     wire        uart_controller_busy;
 
-
     // ============================================================
-    // CLOCK WIZARD
-    //
-    // Board input clock:
-    //     100 MHz
-    //
-    // Generated system clock:
-    //     75 MHz
+    // BANK OWNERSHIP AND INFERENCE SCHEDULER
     // ============================================================
 
-    // Nexys A7 CPU_RESETN is active-low.
-    // rst = 1 when button released, rst = 0 when pressed.
+    always @(posedge clk_sys) begin
+
+        if (rst_sys) begin
+
+            bank_owned <= 2'b00;
+            bank_ready <= 2'b00;
+
+            read_bank <= 1'b0;
+            active_bank <= 1'b0;
+
+            scheduler_state <= SCH_IDLE;
+            preprocessing_start <= 1'b0;
+
+        end
+
+        else begin
+
+            // Default: preprocessing start is a one-cycle pulse.
+            preprocessing_start <= 1'b0;
+
+
+            // ----------------------------------------------------
+            // BANK OWNERSHIP
+            // ----------------------------------------------------
+
+            if (feature_valid)
+                bank_owned[write_bank] <= 1'b1;
+
+            if (bank_complete) begin
+                bank_owned[completed_bank] <= 1'b1;
+                bank_ready[completed_bank] <= 1'b1;
+            end
+
+            if (bank_release) begin
+                bank_owned[released_bank] <= 1'b0;
+                bank_ready[released_bank] <= 1'b0;
+            end
+
+
+            // ----------------------------------------------------
+            // PACKET SCHEDULER
+            // ----------------------------------------------------
+
+            case (scheduler_state)
+
+                // -----------------------------------------------
+                // SELECT A COMPLETED PACKET
+                // -----------------------------------------------
+
+                SCH_IDLE: begin
+
+                    if (bank_ready[0]) begin
+
+                        read_bank <= 1'b0;
+                        active_bank <= 1'b0;
+
+                        bank_ready[0] <= 1'b0;
+
+                        preprocessing_start <= 1'b1;
+                        scheduler_state <= SCH_WAIT_PREP;
+
+                    end
+
+                    else if (bank_ready[1]) begin
+
+                        read_bank <= 1'b1;
+                        active_bank <= 1'b1;
+
+                        bank_ready[1] <= 1'b0;
+
+                        preprocessing_start <= 1'b1;
+                        scheduler_state <= SCH_WAIT_PREP;
+
+                    end
+
+                end
+
+
+                // -----------------------------------------------
+                // WAIT FOR PREPROCESSING COMPLETION
+                // -----------------------------------------------
+
+                SCH_WAIT_PREP: begin
+
+                    if (preprocessing_done) begin
+
+                        // Preprocessing has captured the complete
+                        // feature vector. The bank can be reused.
+                        bank_owned[active_bank] <= 1'b0;
+                        bank_ready[active_bank] <= 1'b0;
+
+                        scheduler_state <= SCH_IDLE;
+
+                    end
+
+                end
+
+
+                default: begin
+                    scheduler_state <= SCH_IDLE;
+                end
+
+            endcase
+
+        end
+
+    end
+
+    // ============================================================
+    // SYSTEM CLOCK AND RESET
+    // ============================================================
+
+    // Use the board's 100 MHz clock directly.
+    assign clk_sys = clk;
+
+    // Board reset is active-low.
     assign rst_active = ~rst;
 
-    clk_wiz_0 clk_wiz_inst (
-        .clk_in1  (clk),
-        .reset    (rst_active),
-        .clk_out1 (clk_sys),
-        .locked   (clk_locked)
-    );
-
-    // Hold the system in reset while the button is pressed
-    // or until the clock wizard locks.
-    assign rst_sys = rst_active | ~clk_locked;
+    // Reset the design while the reset button is pressed.
+    assign rst_sys = rst_active;
 
 
     // ============================================================
@@ -149,15 +275,29 @@ module fpga_top #(
     // ============================================================
 
     packet_parser packet_parser_inst (
-        .clk           (clk_sys),
-        .rst           (rst_sys),
-        .rx_data       (rx_data),
-        .rx_valid      (rx_valid),
-        .feature_index (feature_index),
-        .feature_in    (feature_in),
-        .feature_valid (feature_valid),
-        .packet_done   (packet_done),
-        .packet_error  (packet_error)
+        .clk            (clk_sys),
+        .rst            (rst_sys),
+
+        .rx_data        (rx_data),
+        .rx_valid       (rx_valid),
+
+        .feature_index  (feature_index),
+        .feature_in     (feature_in),
+        .feature_valid  (feature_valid),
+
+        // Dual-bank control
+        .bank_available (bank_available),
+        .write_bank     (write_bank),
+
+        .completed_bank (completed_bank),
+        .bank_complete  (bank_complete),
+
+        .bank_release   (bank_release),
+        .released_bank  (released_bank),
+
+        // Packet status
+        .packet_done    (packet_done),
+        .packet_error   (packet_error)
     );
 
 
@@ -168,9 +308,18 @@ module fpga_top #(
     feature_register feature_register_inst (
         .clk           (clk_sys),
         .rst           (rst_sys),
+
         .load          (feature_valid),
+
         .feature_index (feature_index),
         .feature_in    (feature_in),
+
+        // Select parser's write bank.
+        .write_bank    (write_bank),
+
+        // Select scheduler's inference bank.
+        .read_bank     (read_bank),
+
         .features      (features)
     );
 
@@ -187,10 +336,15 @@ module fpga_top #(
 
     preprocessing preprocessing_inst (
         .clk          (clk_sys),
+        .rst          (rst_sys),
+        .start        (preprocessing_start),
         .features     (features),
-        .preprocessed (preprocessed)
+        .preprocessed (preprocessed),
+        .done         (preprocessing_done)
     );
 
+    assign inference_start = preprocessing_done;
+    assign result_valid = inference_done;
 
     // ============================================================
     // INFERENCE CORE
@@ -214,26 +368,6 @@ module fpga_top #(
         .output_layer_cycles     (output_layer_cycles),
         .inference_cycle_count   (inference_cycle_count),
         .total_inference_cycles  (total_inference_cycles)
-    );
-
-
-    // ============================================================
-    // CONTROLLER FSM
-    // ============================================================
-
-    // IMPORTANT:
-    // This is separate from inference_busy.
-    // controller_fsm and inference_core each drive their own
-    // busy output.
-
-    controller_fsm controller_fsm_inst (
-        .clk             (clk_sys),
-        .rst             (rst_sys),
-        .start           (packet_done),
-        .inference_done  (inference_done),
-        .inference_start (inference_start),
-        .busy            (controller_busy),
-        .result_valid    (result_valid)
     );
 
 

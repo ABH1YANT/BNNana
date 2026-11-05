@@ -22,8 +22,14 @@ module hidden_layer_1 #(
     parameter INPUT_COUNT  = 64,
     parameter OUTPUT_COUNT = 64
 )(
-    input  wire [INPUT_COUNT-1:0]  inputs,
-    output wire [OUTPUT_COUNT-1:0] outputs
+    input wire clk,
+    input wire rst,
+    input wire enable,
+
+    input wire [INPUT_COUNT-1:0] inputs,
+
+    output wire [OUTPUT_COUNT-1:0] outputs,
+    output wire done
 );
 
     // ============================================================
@@ -182,48 +188,77 @@ module hidden_layer_1 #(
 
 
     // ============================================================
-    // INTERMEDIATE SIGNALS
+    // PIPELINE INTERMEDIATE SIGNALS
     // ============================================================
 
     wire [63:0] match_bits [0:63];
+    wire [6:0]  match_count [0:63];
 
-    wire [6:0] match_count [0:63];
+    wire [OUTPUT_COUNT-1:0] popcount_done;
+    wire [OUTPUT_COUNT-1:0] comparator_done;
+
+    wire [OUTPUT_COUNT-1:0] neuron_outputs;
 
 
     // ============================================================
-    // 64 XNOR + POPCOUNT BLOCKS
+    // 64 PARALLEL XNOR + POPCOUNT + THRESHOLD PIPELINES
     // ============================================================
 
     genvar n;
 
     generate
-
         for (n = 0; n < OUTPUT_COUNT; n = n + 1) begin : GEN_NEURONS
+
+            // ----------------------------------------------------
+            // STAGES 1–3: XNOR AND POPCOUNT
+            // ----------------------------------------------------
 
             xnor_popcount #(
                 .WIDTH(INPUT_COUNT)
             ) xnor_popcount_inst (
+                .clk(clk),
+                .rst(rst),
+                .enable(enable),
+
                 .inputs(inputs),
                 .weights(weights[n]),
+
                 .matches(match_bits[n]),
-                .count(match_count[n])
+                .count(match_count[n]),
+                .done(popcount_done[n])
             );
 
 
-            // ====================================================
-            // THRESHOLD + BINARY SIGN
-            // ====================================================
+            // ----------------------------------------------------
+            // STAGE 4: REGISTERED THRESHOLD COMPARISON
+            // ----------------------------------------------------
 
             threshold_compare #(
                 .COUNT_WIDTH(7)
             ) threshold_compare_inst (
+                .clk(clk),
+                .rst(rst),
+                .enable(popcount_done[n]),
+
                 .count(match_count[n]),
                 .threshold(thresholds[n]),
-                .output_bit(outputs[n])
+
+                .output_bit(neuron_outputs[n]),
+                .done(comparator_done[n])
             );
 
         end
-
     endgenerate
+
+
+    // ============================================================
+    // LAYER OUTPUTS
+    // ============================================================
+
+    assign outputs = neuron_outputs;
+
+    // All neurons receive the same enable and reset,
+    // so their valid signals are aligned.
+    assign done = comparator_done[0];
 
 endmodule

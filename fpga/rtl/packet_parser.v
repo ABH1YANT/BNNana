@@ -73,10 +73,20 @@ module packet_parser (
     input wire [7:0]  rx_data,
     input wire        rx_valid,
 
+    // Feature output
     output reg [3:0]  feature_index,
     output reg [26:0] feature_in,
-
     output reg        feature_valid,
+
+    // Double-buffer control
+    input wire [1:0]  bank_available,
+    output reg        write_bank,
+    output reg        completed_bank,
+    output reg        bank_complete,
+    output reg        bank_release,
+    output reg        released_bank,
+
+    // Packet status
     output reg        packet_done,
     output reg        packet_error
 );
@@ -88,26 +98,28 @@ module packet_parser (
     localparam [7:0] HEADER = 8'hAA;
     localparam [7:0] FOOTER = 8'h55;
 
-
     // ------------------------------------------------------------
     // Parser states
     // ------------------------------------------------------------
 
-    localparam [1:0] S_IDLE    = 2'd0;
-    localparam [1:0] S_PAYLOAD = 2'd1;
-    localparam [1:0] S_FOOTER  = 2'd2;
+    localparam [2:0] S_IDLE        = 3'd0;
+    localparam [2:0] S_PAYLOAD     = 3'd1;
+    localparam [2:0] S_FOOTER      = 3'd2;
+    localparam [2:0] S_DROP_PAYLOAD = 3'd3;
+    localparam [2:0] S_DROP_FOOTER  = 3'd4;
 
-    reg [1:0] state;
+    reg [2:0] state;
 
+    // Indicates whether a bank has been reserved
+    // for the currently received packet.
+    reg bank_allocated;
 
     // ------------------------------------------------------------
     // Payload byte counter
-    //
     // 0..42 = 43 payload bytes
     // ------------------------------------------------------------
 
     reg [5:0] byte_count;
-
 
     // ------------------------------------------------------------
     // Temporary byte registers
@@ -117,7 +129,6 @@ module packet_parser (
     reg [7:0] b1;
     reg [7:0] b2;
 
-
     // ------------------------------------------------------------
     // Main parser
     // ------------------------------------------------------------
@@ -125,6 +136,12 @@ module packet_parser (
     always @(posedge clk) begin
 
         if (rst) begin
+            write_bank     <= 1'b0;
+            completed_bank <= 1'b0;
+            bank_complete  <= 1'b0;
+            bank_allocated <= 1'b0;
+            bank_release <= 1'b0;
+            released_bank <= 1'b0;
 
             state         <= S_IDLE;
             byte_count    <= 6'd0;
@@ -139,7 +156,6 @@ module packet_parser (
             feature_valid <= 1'b0;
             packet_done   <= 1'b0;
             packet_error  <= 1'b0;
-
         end
 
         else begin
@@ -148,10 +164,11 @@ module packet_parser (
             // These outputs are pulses.
             // ----------------------------------------------------
 
+            bank_complete <= 1'b0;
             feature_valid <= 1'b0;
             packet_done   <= 1'b0;
             packet_error  <= 1'b0;
-
+            bank_release  <= 1'b0;
 
             if (rx_valid) begin
 
@@ -166,12 +183,31 @@ module packet_parser (
                         if (rx_data == HEADER) begin
 
                             byte_count <= 6'd0;
-                            state      <= S_PAYLOAD;
 
+                            // Reserve bank 0 if available.
+                            if (bank_available[0]) begin
+                                write_bank     <= 1'b0;
+                                bank_allocated <= 1'b1;
+                                state          <= S_PAYLOAD;
+                            end
+
+                            // Otherwise reserve bank 1.
+                            else if (bank_available[1]) begin
+                                write_bank     <= 1'b1;
+                                bank_allocated <= 1'b1;
+                                state          <= S_PAYLOAD;
+                            end
+
+                            // No bank available.
+                            // Discard this packet safely.
+                            else begin
+
+                                bank_allocated <= 1'b0;
+                                state          <= S_DROP_PAYLOAD;
+
+                            end
                         end
-
                     end
-
 
                     // =================================================
                     // RECEIVE 43 PAYLOAD BYTES
@@ -189,13 +225,10 @@ module packet_parser (
                             // -----------------------------------------
 
                             6'd0: begin
-
                                 b0 <= rx_data;
-
                             end
 
                             6'd1: begin
-
                                 feature_index <= 4'd0;
 
                                 feature_in <= {
@@ -205,9 +238,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 1
@@ -217,13 +248,10 @@ module packet_parser (
                             // -----------------------------------------
 
                             6'd2: begin
-
                                 b0 <= rx_data;
-
                             end
 
                             6'd3: begin
-
                                 feature_index <= 4'd1;
 
                                 feature_in <= {
@@ -233,9 +261,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 2
@@ -257,7 +283,6 @@ module packet_parser (
                             end
 
                             6'd7: begin
-
                                 feature_index <= 4'd2;
 
                                 feature_in <= {
@@ -269,9 +294,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 3
@@ -293,7 +316,6 @@ module packet_parser (
                             end
 
                             6'd11: begin
-
                                 feature_index <= 4'd3;
 
                                 feature_in <= {
@@ -305,9 +327,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 4
@@ -321,7 +341,6 @@ module packet_parser (
                             end
 
                             6'd13: begin
-
                                 feature_index <= 4'd4;
 
                                 feature_in <= {
@@ -331,9 +350,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 5
@@ -347,7 +364,6 @@ module packet_parser (
                             end
 
                             6'd15: begin
-
                                 feature_index <= 4'd5;
 
                                 feature_in <= {
@@ -357,9 +373,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 6
@@ -369,7 +383,6 @@ module packet_parser (
                             // -----------------------------------------
 
                             6'd16: begin
-
                                 feature_index <= 4'd6;
 
                                 feature_in <= {
@@ -378,9 +391,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 7
@@ -398,7 +409,6 @@ module packet_parser (
                             end
 
                             6'd19: begin
-
                                 feature_index <= 4'd7;
 
                                 feature_in <= {
@@ -409,9 +419,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 8
@@ -425,7 +433,6 @@ module packet_parser (
                             end
 
                             6'd21: begin
-
                                 feature_index <= 4'd8;
 
                                 feature_in <= {
@@ -435,7 +442,6 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
 
 
@@ -455,7 +461,6 @@ module packet_parser (
                             end
 
                             6'd24: begin
-
                                 feature_index <= 4'd9;
 
                                 feature_in <= {
@@ -466,9 +471,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 10
@@ -486,7 +489,6 @@ module packet_parser (
                             end
 
                             6'd27: begin
-
                                 feature_index <= 4'd10;
 
                                 feature_in <= {
@@ -497,9 +499,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 11
@@ -513,7 +513,6 @@ module packet_parser (
                             end
 
                             6'd29: begin
-
                                 feature_index <= 4'd11;
 
                                 feature_in <= {
@@ -523,9 +522,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 12
@@ -543,7 +540,6 @@ module packet_parser (
                             end
 
                             6'd32: begin
-
                                 feature_index <= 4'd12;
 
                                 feature_in <= {
@@ -554,9 +550,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 13
@@ -574,7 +568,6 @@ module packet_parser (
                             end
 
                             6'd35: begin
-
                                 feature_index <= 4'd13;
 
                                 feature_in <= {
@@ -585,9 +578,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 14
@@ -609,7 +600,6 @@ module packet_parser (
                             end
 
                             6'd39: begin
-
                                 feature_index <= 4'd14;
 
                                 feature_in <= {
@@ -620,9 +610,7 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             // -----------------------------------------
                             // Feature 15
@@ -640,7 +628,6 @@ module packet_parser (
                             end
 
                             6'd42: begin
-
                                 feature_index <= 4'd15;
 
                                 feature_in <= {
@@ -651,14 +638,11 @@ module packet_parser (
                                 };
 
                                 feature_valid <= 1'b1;
-
                             end
-
 
                             default: begin
                                 // Should never occur.
                             end
-
                         endcase
 
 
@@ -668,8 +652,23 @@ module packet_parser (
                         // ------------------------------------------------
 
                         if (byte_count == 6'd42) begin
-
                             state <= S_FOOTER;
+                        end
+                        else begin
+
+                            byte_count <= byte_count + 6'd1;
+                        end
+                    end
+
+                    // =================================================
+                    // DISCARD PAYLOAD WHEN NO BANK IS AVAILABLE
+                    // =================================================
+
+                    S_DROP_PAYLOAD: begin
+
+                        if (byte_count == 6'd42) begin
+
+                            state <= S_DROP_FOOTER;
 
                         end
                         else begin
@@ -682,6 +681,21 @@ module packet_parser (
 
 
                     // =================================================
+                    // DISCARD PACKET FOOTER
+                    // =================================================
+
+                    S_DROP_FOOTER: begin
+
+                        // Packet was discarded because no bank was free.
+                        packet_error <= 1'b1;
+
+                        state      <= S_IDLE;
+                        byte_count <= 6'd0;
+
+                    end
+
+
+                    // =================================================
                     // WAIT FOR FOOTER
                     // =================================================
 
@@ -689,38 +703,42 @@ module packet_parser (
 
                         if (rx_data == FOOTER) begin
 
-                            packet_done <= 1'b1;
+                            if (bank_allocated) begin
+                                packet_done   <= 1'b1;
+                                bank_complete <= 1'b1;
+                                completed_bank <= write_bank;
+                            end
 
                         end
                         else begin
 
                             packet_error <= 1'b1;
 
+                            if (bank_allocated) begin
+                                bank_release <= 1'b1;
+                                released_bank <= write_bank;
+                            end
+
                         end
+
+                        bank_allocated <= 1'b0;
 
                         state      <= S_IDLE;
                         byte_count <= 6'd0;
 
                     end
-
 
                     // =================================================
                     // DEFAULT
                     // =================================================
 
                     default: begin
-
-                        state      <= S_IDLE;
-                        byte_count <= 6'd0;
-
+                        state          <= S_IDLE;
+                        byte_count     <= 6'd0;
+                        bank_allocated <= 1'b0;
                     end
-
                 endcase
-
             end
-
         end
-
     end
-
 endmodule

@@ -2,8 +2,13 @@
 
 module preprocessing (
     input  wire         clk,
+    input  wire         rst,
+    input  wire         start,
+
     input  wire [277:0] features,
-    output wire [127:0] preprocessed
+
+    output wire [127:0] preprocessed,
+    output reg          done
 );
 
     // ============================================================
@@ -193,6 +198,9 @@ module preprocessing (
 
     (* DONT_TOUCH = "TRUE" *)
     reg [127:0] preprocessed_reg;
+    // Indicates that the registered LUT outputs
+    // contain data from a valid preprocessing request.
+    reg lookup_valid;
 
 
     // ============================================================
@@ -200,24 +208,30 @@ module preprocessing (
     // ============================================================
 
     always @(posedge clk) begin
-
-        q0  <= lut_0[addr_0];
-        q1  <= lut_1[addr_1];
-        q2  <= lut_2[addr_2];
-        q3  <= lut_3[addr_3];
-        q4  <= lut_4[addr_4];
-        q5  <= lut_5[addr_5];
-        q6  <= lut_6[addr_6];
-        q7  <= lut_7[addr_7];
-        q8  <= lut_8[addr_8];
-        q9  <= lut_9[addr_9];
-        q10 <= lut_10[addr_10];
-        q11 <= lut_11[addr_11];
-        q12 <= lut_12[addr_12];
-        q13 <= lut_13[addr_13];
-        q14 <= lut_14[addr_14];
-        q15 <= lut_15[addr_15];
-
+        if (rst) begin
+            lookup_valid <= 1'b0;
+        end
+        else begin
+            lookup_valid <= start;
+            if (start) begin
+                q0  <= lut_0[addr_0];
+                q1  <= lut_1[addr_1];
+                q2  <= lut_2[addr_2];
+                q3  <= lut_3[addr_3];
+                q4  <= lut_4[addr_4];
+                q5  <= lut_5[addr_5];
+                q6  <= lut_6[addr_6];
+                q7  <= lut_7[addr_7];
+                q8  <= lut_8[addr_8];
+                q9  <= lut_9[addr_9];
+                q10 <= lut_10[addr_10];
+                q11 <= lut_11[addr_11];
+                q12 <= lut_12[addr_12];
+                q13 <= lut_13[addr_13];
+                q14 <= lut_14[addr_14];
+                q15 <= lut_15[addr_15];
+            end
+        end
     end
 
 
@@ -226,26 +240,37 @@ module preprocessing (
     // ============================================================
 
     always @(posedge clk) begin
+        if (rst) begin
+            preprocessed_reg <= 128'd0;
+            done             <= 1'b0;
+        end
 
-        preprocessed_reg <= {
-            q15,
-            q14,
-            q13,
-            q12,
-            q11,
-            q10,
-            q9,
-            q8,
-            q7,
-            q6,
-            q5,
-            q4,
-            q3,
-            q2,
-            q1,
-            q0
-        };
+        else begin
+            done <= 1'b0;
 
+            if (lookup_valid) begin
+                preprocessed_reg <= {
+                    q15,
+                    q14,
+                    q13,
+                    q12,
+                    q11,
+                    q10,
+                    q9,
+                    q8,
+                    q7,
+                    q6,
+                    q5,
+                    q4,
+                    q3,
+                    q2,
+                    q1,
+                    q0
+                };
+
+                done <= 1'b1;
+            end
+        end
     end
 
 
